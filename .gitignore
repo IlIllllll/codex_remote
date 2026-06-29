@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.codex-web/
+.DS_Store
+*.log
+coverage/
