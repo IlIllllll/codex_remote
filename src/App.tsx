@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
   Bot,
-  FolderPlus,
   FolderOpen,
   GitBranch,
   MessageSquare,
@@ -15,6 +14,7 @@ import {
   createProject,
   createUser,
   deleteProject,
+  deleteUser,
   getApiUserId,
   listProjects,
   listThreads,
@@ -32,6 +32,7 @@ import type {
   CodexNotification,
   CodexServerRequest,
   Project,
+  ReasoningEffort,
   SandboxMode,
   SocketMessage,
   TerminalOutputEvent,
@@ -90,6 +91,35 @@ function formatTime(seconds: number): string {
   return new Date(seconds * 1000).toLocaleString();
 }
 
+function projectNameFromPath(rootPath: string): string {
+  return rootPath.replace(/\/+$/, "").split("/").filter(Boolean).at(-1) ?? "Project";
+}
+
+type ModelProfile = {
+  id: string;
+  label: string;
+  model: string;
+  effort: ReasoningEffort;
+};
+
+const modelProfiles: ModelProfile[] = [
+  { id: "gpt-5.5:xhigh", label: "GPT-5.5 xhigh", model: "gpt-5.5", effort: "xhigh" },
+  { id: "gpt-5.5:high", label: "GPT-5.5 high", model: "gpt-5.5", effort: "high" },
+  { id: "gpt-5.5:medium", label: "GPT-5.5 medium", model: "gpt-5.5", effort: "medium" },
+  { id: "gpt-5.5:low", label: "GPT-5.5 low", model: "gpt-5.5", effort: "low" }
+];
+
+const defaultModelProfileId = "gpt-5.5:xhigh";
+const adminUserId = "admin";
+
+function modelProfileById(id: string): ModelProfile {
+  return modelProfiles.find((profile) => profile.id === id) ?? modelProfiles[0];
+}
+
+function modelProfileIdFor(model: string, effort: ReasoningEffort): string {
+  return modelProfiles.find((profile) => profile.model === model && profile.effort === effort)?.id ?? defaultModelProfileId;
+}
+
 function notificationTitle(notification: CodexNotification): ActivityEvent {
   const method = notification.method ?? "event";
   const params = notification.params ?? {};
@@ -122,20 +152,18 @@ export function App() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [selectedUserId, setSelectedUserId] = useState(getApiUserId());
   const [newUserName, setNewUserName] = useState("");
+  const [pendingCreateUserName, setPendingCreateUserName] = useState<string | null>(null);
+  const [pendingDeleteUserId, setPendingDeleteUserId] = useState<string | null>(null);
   const [projectRoot, setProjectRoot] = useState("/Volumes/DevDrive/program");
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [selectedThread, setSelectedThread] = useState<ThreadSummary | null>(null);
   const [prompt, setPrompt] = useState("");
-  const [newProjectName, setNewProjectName] = useState("");
-  const [newProjectPath, setNewProjectPath] = useState("/Volumes/DevDrive/program/");
-  const [createDirectory, setCreateDirectory] = useState(false);
-  const [gitInit, setGitInit] = useState(false);
-  const [manualPathEdit, setManualPathEdit] = useState(false);
   const [selectingDirectory, setSelectingDirectory] = useState(false);
-  const [model, setModel] = useState("");
-  const [sandbox, setSandbox] = useState<SandboxMode>("workspace-write");
-  const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>("on-request");
+  const [pendingDeleteProjectId, setPendingDeleteProjectId] = useState<string | null>(null);
+  const [modelProfileId, setModelProfileId] = useState(defaultModelProfileId);
+  const [sandbox, setSandbox] = useState<SandboxMode>("danger-full-access");
+  const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>("never");
   const [socketStatus, setSocketStatus] = useState<"connecting" | "open" | "closed">("closed");
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [approvals, setApprovals] = useState<CodexServerRequest[]>([]);
@@ -148,6 +176,8 @@ export function App() {
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId]
   );
+  const selectedModelProfile = useMemo(() => modelProfileById(modelProfileId), [modelProfileId]);
+  const isAdmin = selectedUserId === adminUserId;
 
   useEffect(() => {
     void refreshUsers();
@@ -166,6 +196,8 @@ export function App() {
     setSelectedProjectId("");
     setSelectedThread(null);
     setThreads([]);
+    setPendingDeleteProjectId(null);
+    setPendingDeleteUserId(null);
     void refreshProjects();
   }, [selectedUserId]);
 
@@ -173,9 +205,9 @@ export function App() {
     if (!selectedProject) {
       return;
     }
-    setModel(selectedProject.defaultModel);
-    setSandbox(selectedProject.defaultSandbox);
-    setApprovalPolicy(selectedProject.defaultApprovalPolicy);
+    setModelProfileId(modelProfileIdFor(selectedProject.defaultModel || "gpt-5.5", selectedProject.defaultReasoningEffort || "xhigh"));
+    setSandbox(selectedProject.defaultSandbox || "danger-full-access");
+    setApprovalPolicy(selectedProject.defaultApprovalPolicy || "never");
     void refreshThreads(selectedProject.id);
   }, [selectedProjectId]);
 
@@ -212,18 +244,47 @@ export function App() {
     }
   }
 
-  async function addUser() {
-    if (!newUserName.trim()) {
+  function requestAddUser() {
+    const name = newUserName.trim();
+    if (!name) {
+      return;
+    }
+    setError("");
+    setPendingCreateUserName(name);
+  }
+
+  async function confirmAddUser() {
+    if (!pendingCreateUserName) {
       return;
     }
     try {
-      const response = await createUser({ name: newUserName.trim() });
+      const response = await createUser({ name: pendingCreateUserName });
       setUsers((current) => [response.data, ...current]);
       setSelectedUserId(response.data.id);
       setNewUserName("");
+      setPendingCreateUserName(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
+  }
+
+  async function removeUser(user: UserProfile) {
+    try {
+      setError("");
+      await deleteUser(user.id);
+      setPendingDeleteUserId(null);
+      setUsers((current) => current.filter((entry) => entry.id !== user.id));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  function requestRemoveUser(user: UserProfile) {
+    if (pendingDeleteUserId !== user.id) {
+      setPendingDeleteUserId(user.id);
+      return;
+    }
+    void removeUser(user);
   }
 
   async function refreshThreads(projectId = selectedProjectId) {
@@ -248,21 +309,30 @@ export function App() {
     }
   }
 
-  async function addProject() {
+  async function connectProjectDirectory(rootPath: string) {
+    const existingProject = projects.find((project) => project.rootPath === rootPath);
+    if (existingProject) {
+      setPendingDeleteProjectId(null);
+      setSelectedThread(null);
+      setThreads([]);
+      setSelectedProjectId(existingProject.id);
+      return;
+    }
+
     try {
       const response = await createProject({
-        name: newProjectName || newProjectPath.split("/").filter(Boolean).at(-1) || "Project",
-        rootPath: newProjectPath,
-        createDirectory,
-        gitInit,
-        defaultModel: model,
+        name: projectNameFromPath(rootPath),
+        rootPath,
+        defaultModel: selectedModelProfile.model,
+        defaultReasoningEffort: selectedModelProfile.effort,
         defaultSandbox: sandbox,
         defaultApprovalPolicy: approvalPolicy
       });
-      setProjects((current) => [response.data, ...current]);
+      setProjects((current) => [response.data, ...current.filter((project) => project.id !== response.data.id)]);
+      setPendingDeleteProjectId(null);
       setSelectedProjectId(response.data.id);
-      setNewProjectName("");
-      setNewProjectPath(`${projectRoot}/`);
+      setSelectedThread(null);
+      setThreads([]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -273,10 +343,7 @@ export function App() {
     setError("");
     try {
       const response = await selectDirectory();
-      setNewProjectPath(response.data.rootPath);
-      if (!newProjectName.trim()) {
-        setNewProjectName(response.data.rootPath.split("/").filter(Boolean).at(-1) ?? "");
-      }
+      await connectProjectDirectory(response.data.rootPath);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       if (!message.includes("canceled")) {
@@ -288,18 +355,32 @@ export function App() {
   }
 
   async function removeProject(project: Project) {
-    if (!window.confirm(`Remove ${project.name} from Codex Web?`)) {
+    try {
+      setError("");
+      await deleteProject(project.id);
+      if (selectedProjectId === project.id) {
+        setSelectedProjectId("");
+        setSelectedThread(null);
+        setThreads([]);
+      }
+      setPendingDeleteProjectId(null);
+      setProjects((current) => current.filter((entry) => entry.id !== project.id));
+      await refreshProjects();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  function requestRemoveProject(project: Project) {
+    if (pendingDeleteProjectId !== project.id) {
+      setPendingDeleteProjectId(project.id);
       return;
     }
-    await deleteProject(project.id);
-    await refreshProjects();
+    void removeProject(project);
   }
 
   function sendPrompt() {
     if (!selectedProject || !prompt.trim()) {
-      return;
-    }
-    if (sandbox === "danger-full-access" && !window.confirm("Run this turn with danger-full-access?")) {
       return;
     }
     const requestId = `thread-${crypto.randomUUID()}`;
@@ -311,7 +392,8 @@ export function App() {
           projectId: selectedProject.id,
           threadId: selectedThread.id,
           prompt,
-          model,
+          model: selectedModelProfile.model,
+          reasoningEffort: selectedModelProfile.effort,
           sandbox,
           approvalPolicy
         }
@@ -321,7 +403,8 @@ export function App() {
           userId: selectedUserId,
           projectId: selectedProject.id,
           prompt,
-          model,
+          model: selectedModelProfile.model,
+          reasoningEffort: selectedModelProfile.effort,
           sandbox,
           approvalPolicy
         };
@@ -464,7 +547,7 @@ export function App() {
           <select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
             {users.map((user) => (
               <option key={user.id} value={user.id}>
-                {user.name}
+                {user.id === adminUserId ? `${user.name} (管理员)` : user.name}
               </option>
             ))}
           </select>
@@ -474,73 +557,62 @@ export function App() {
               onChange={(event) => setNewUserName(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
-                  void addUser();
+                  requestAddUser();
                 }
               }}
               placeholder="新用户名称"
             />
-            <button className="iconTextButton" type="button" onClick={() => void addUser()}>
+            <button className="iconTextButton" type="button" onClick={requestAddUser}>
               添加
             </button>
           </div>
+          {isAdmin ? (
+            <div className="userAdminList">
+              <div className="miniHeader">
+                <span>用户管理</span>
+              </div>
+              {users.filter((user) => user.id !== adminUserId).length ? (
+                users
+                  .filter((user) => user.id !== adminUserId)
+                  .map((user) => {
+                    const deletePending = pendingDeleteUserId === user.id;
+                    return (
+                      <div className="userAdminRow" key={user.id}>
+                        <span>{user.name}</span>
+                        <button
+                          className={`miniDangerButton ${deletePending ? "confirm" : ""}`}
+                          type="button"
+                          onClick={() => requestRemoveUser(user)}
+                          title={deletePending ? `确认删除 ${user.name}` : `删除 ${user.name}`}
+                        >
+                          {deletePending ? "确认" : "删除"}
+                        </button>
+                      </div>
+                    );
+                  })
+              ) : (
+                <p className="creatorHint">暂无其他用户。</p>
+              )}
+            </div>
+          ) : null}
           <p className="creatorHint">只控制项目目录记忆和可见项目，不隔离 Codex 登录态。</p>
         </div>
 
         <div className="projectCreator">
           <div className="miniHeader">
-            <FolderPlus size={16} />
+            <FolderOpen size={16} />
             <span>连接本地记录</span>
           </div>
-          <label className="fieldLabel" htmlFor="project-name-input">
-            显示名称
-          </label>
-          <input
-            id="project-name-input"
-            value={newProjectName}
-            onChange={(event) => setNewProjectName(event.target.value)}
-            placeholder="可选"
-          />
-          <label className="fieldLabel" htmlFor="project-path-input">
-            本地项目目录
-          </label>
-          <div className="pathPickerRow">
-            <input
-              id="project-path-input"
-              value={newProjectPath}
-              onChange={(event) => setNewProjectPath(event.target.value)}
-              placeholder={projectRoot}
-              readOnly={!manualPathEdit}
-            />
-            <button
-              className="iconTextButton"
-              type="button"
-              onClick={() => void chooseDirectory()}
-              disabled={selectingDirectory}
-            >
-              <FolderOpen size={16} />
-              {selectingDirectory ? "选择中" : "选择目录"}
-            </button>
-          </div>
-          <p className="creatorHint">本地 Codex 记录会按这个目录的 cwd 进行匹配。</p>
-          <label>
-            <input type="checkbox" checked={manualPathEdit} onChange={(event) => setManualPathEdit(event.target.checked)} />
-            手动编辑路径
-          </label>
-          <details className="advancedOptions">
-            <summary>新建项目选项</summary>
-            <label>
-              <input type="checkbox" checked={createDirectory} onChange={(event) => setCreateDirectory(event.target.checked)} />
-              创建缺失目录
-            </label>
-            <label>
-              <input type="checkbox" checked={gitInit} onChange={(event) => setGitInit(event.target.checked)} />
-              初始化 Git 仓库
-            </label>
-          </details>
-          <button className="iconTextButton primary full" type="button" onClick={addProject}>
-            <FolderPlus size={16} />
-            连接记录
+          <button
+            className="iconTextButton primary full"
+            type="button"
+            onClick={() => void chooseDirectory()}
+            disabled={selectingDirectory}
+          >
+            <FolderOpen size={16} />
+            {selectingDirectory ? "选择中" : "选择目录"}
           </button>
+          <p className="creatorHint">选择后会自动连接该目录的 Codex 记录，并用目录名作为项目名。</p>
         </div>
 
         <div className="listHeader">
@@ -550,29 +622,57 @@ export function App() {
           </button>
         </div>
         <div className="projectList">
-          {projects.map((project) => (
-            <button
-              type="button"
-              className={`projectRow ${project.id === selectedProjectId ? "selected" : ""}`}
-              key={project.id}
-              onClick={() => setSelectedProjectId(project.id)}
-            >
-              <GitBranch size={15} />
-              <span>
-                <strong>{project.name}</strong>
-                <small>{project.rootPath}</small>
-              </span>
-              <Trash2
-                size={15}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void removeProject(project);
-                }}
-              />
-            </button>
-          ))}
+          {projects.map((project) => {
+            const deletePending = pendingDeleteProjectId === project.id;
+            return (
+              <div
+                className={`projectRow ${project.id === selectedProjectId ? "selected" : ""}`}
+                key={project.id}
+              >
+                <button
+                  className="projectSelectButton"
+                  type="button"
+                  onClick={() => {
+                    setPendingDeleteProjectId(null);
+                    setSelectedProjectId(project.id);
+                  }}
+                >
+                  <GitBranch size={15} />
+                  <span>
+                    <strong>{project.name}</strong>
+                    <small>{project.rootPath}</small>
+                  </span>
+                </button>
+                <button
+                  className={`projectDeleteButton ${deletePending ? "confirm" : ""}`}
+                  type="button"
+                  onClick={() => requestRemoveProject(project)}
+                  title={deletePending ? `确认移除 ${project.name}` : `移除 ${project.name}`}
+                >
+                  {deletePending ? "确认" : <Trash2 size={15} />}
+                </button>
+              </div>
+            );
+          })}
         </div>
       </aside>
+
+      {pendingCreateUserName ? (
+        <div className="modalScrim" role="dialog" aria-modal="true" aria-labelledby="create-user-title">
+          <div className="confirmDialog">
+            <h2 id="create-user-title">确认添加用户</h2>
+            <p>将创建用户 “{pendingCreateUserName}”，用于记忆该用户可见的本地项目目录。</p>
+            <div className="dialogActions">
+              <button className="iconTextButton" type="button" onClick={() => setPendingCreateUserName(null)}>
+                取消
+              </button>
+              <button className="iconTextButton primary" type="button" onClick={() => void confirmAddUser()}>
+                确认添加
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <section className="threadColumn">
         <header className="topbar">
@@ -583,16 +683,22 @@ export function App() {
           </div>
           <div className="controls">
             <Settings2 size={17} />
-            <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="default model" />
+            <select value={modelProfileId} onChange={(event) => setModelProfileId(event.target.value)}>
+              {modelProfiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.label}
+                </option>
+              ))}
+            </select>
             <select value={sandbox} onChange={(event) => setSandbox(event.target.value as SandboxMode)}>
-              <option value="workspace-write">workspace-write</option>
-              <option value="read-only">read-only</option>
-              <option value="danger-full-access">danger-full-access</option>
+              <option value="danger-full-access">完全访问</option>
+              <option value="workspace-write">项目可写</option>
+              <option value="read-only">只读</option>
             </select>
             <select value={approvalPolicy} onChange={(event) => setApprovalPolicy(event.target.value as ApprovalPolicy)}>
-              <option value="on-request">on-request</option>
-              <option value="untrusted">untrusted</option>
-              <option value="never">never</option>
+              <option value="never">不询问</option>
+              <option value="on-request">需要时询问</option>
+              <option value="untrusted">不可信命令询问</option>
             </select>
           </div>
         </header>

@@ -1,5 +1,6 @@
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "untrusted" | "on-request" | "never";
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 export interface UserProfile {
   id: string;
@@ -14,6 +15,7 @@ export interface Project {
   name: string;
   rootPath: string;
   defaultModel: string;
+  defaultReasoningEffort: ReasoningEffort;
   defaultSandbox: SandboxMode;
   defaultApprovalPolicy: ApprovalPolicy;
   createdAt: string;

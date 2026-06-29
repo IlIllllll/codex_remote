@@ -59,6 +59,13 @@ function pickSandbox(value: unknown, fallback: Project["defaultSandbox"]): Proje
   return fallback;
 }
 
+function pickReasoningEffort(value: unknown, fallback: Project["defaultReasoningEffort"]): Project["defaultReasoningEffort"] {
+  if (value === "low" || value === "medium" || value === "high" || value === "xhigh") {
+    return value;
+  }
+  return fallback;
+}
+
 function pickUserId(value: unknown): string {
   return pickString(value, DEFAULT_USER_ID).trim() || DEFAULT_USER_ID;
 }
@@ -156,7 +163,8 @@ async function handleClientMessage(ws: WebSocket, bridge: CodexBridge, store: Pr
           cwd: project.rootPath,
           approvalPolicy: pickString(message.approvalPolicy, project.defaultApprovalPolicy),
           sandboxPolicy: sandboxPolicy(project, pickSandbox(message.sandbox, project.defaultSandbox)),
-          model: pickString(message.model, project.defaultModel) || null
+          model: pickString(message.model, project.defaultModel) || null,
+          effort: pickReasoningEffort(message.reasoningEffort, project.defaultReasoningEffort)
         });
         send(ws, { type: "ack", requestId, ok: true, data: { thread, turn } });
         break;
@@ -182,7 +190,8 @@ async function handleClientMessage(ws: WebSocket, bridge: CodexBridge, store: Pr
           cwd: project.rootPath,
           approvalPolicy: pickString(message.approvalPolicy, project.defaultApprovalPolicy),
           sandboxPolicy: sandboxPolicy(project, pickSandbox(message.sandbox, project.defaultSandbox)),
-          model: pickString(message.model, project.defaultModel) || null
+          model: pickString(message.model, project.defaultModel) || null,
+          effort: pickReasoningEffort(message.reasoningEffort, project.defaultReasoningEffort)
         });
         send(ws, { type: "ack", requestId, ok: true, data: { turn } });
         break;

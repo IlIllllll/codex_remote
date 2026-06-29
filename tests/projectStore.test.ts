@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ProjectStore } from "../server/db.js";
+import { ADMIN_USER_ID, ProjectStore } from "../server/db.js";
 
 const stores: ProjectStore[] = [];
 
@@ -20,6 +20,13 @@ afterEach(() => {
 });
 
 describe("ProjectStore", () => {
+  it("creates the admin user by default", () => {
+    const store = createStore();
+
+    expect(store.getUser(ADMIN_USER_ID)?.name).toBe("admin");
+    expect(store.listUsers().some((user) => user.id === ADMIN_USER_ID)).toBe(true);
+  });
+
   it("creates and lists projects", () => {
     const store = createStore();
     const project = store.createProject({
@@ -28,6 +35,10 @@ describe("ProjectStore", () => {
     });
 
     expect(project.id).toBeTruthy();
+    expect(project.defaultModel).toBe("gpt-5.5");
+    expect(project.defaultReasoningEffort).toBe("xhigh");
+    expect(project.defaultSandbox).toBe("danger-full-access");
+    expect(project.defaultApprovalPolicy).toBe("never");
     expect(store.listProjects()).toHaveLength(1);
     expect(store.getProject(project.id)?.name).toBe("Demo");
   });
@@ -42,6 +53,44 @@ describe("ProjectStore", () => {
     expect(store.updateProject(project.id, { name: "Renamed" })?.name).toBe("Renamed");
     expect(store.deleteProject(project.id)).toBe(true);
     expect(store.getProject(project.id)).toBeNull();
+  });
+
+  it("deletes non-admin user metadata and keeps admin", () => {
+    const store = createStore();
+    const user = store.createUser("Temporary");
+    const project = store.createProject({
+      userId: user.id,
+      name: "Temporary Project",
+      rootPath: "/Volumes/DevDrive/program/temp"
+    });
+
+    expect(store.deleteUser(ADMIN_USER_ID)).toBe(false);
+    expect(store.getUser(ADMIN_USER_ID)).not.toBeNull();
+    expect(store.deleteUser(user.id)).toBe(true);
+    expect(store.getUser(user.id)).toBeNull();
+    expect(store.getProject(project.id, user.id)).toBeNull();
+  });
+
+  it("finds projects by root path within one user", () => {
+    const store = createStore();
+    const alice = store.createUser("Alice");
+    const bob = store.createUser("Bob");
+    const rootPath = "/Volumes/DevDrive/program/demo";
+
+    const aliceProject = store.createProject({
+      userId: alice.id,
+      name: "Alice Demo",
+      rootPath
+    });
+    const bobProject = store.createProject({
+      userId: bob.id,
+      name: "Bob Demo",
+      rootPath
+    });
+
+    expect(store.getProjectByRootPath(rootPath, alice.id)?.id).toBe(aliceProject.id);
+    expect(store.getProjectByRootPath(rootPath, bob.id)?.id).toBe(bobProject.id);
+    expect(store.getProjectByRootPath(rootPath)).toBeNull();
   });
 
   it("scopes project visibility by user", () => {

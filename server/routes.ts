@@ -5,13 +5,16 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { CodexBridge } from "./codexBridge.js";
 import { defaults, serverConfig } from "./config.js";
-import { DEFAULT_USER_ID, type ProjectStore } from "./db.js";
+import { ADMIN_USER_ID, DEFAULT_USER_ID, type ProjectStore } from "./db.js";
 import { ensureProjectDirectory, PathPolicyError, resolveProjectPath } from "./pathPolicy.js";
+import { readThreadFromJsonl, threadJsonlPathFromError } from "./threadFallback.js";
+import { listAllCodexThreads, THREAD_LIST_PAGE_SIZE } from "./threadList.js";
 
 const execFileAsync = promisify(execFile);
 
 const sandboxSchema = z.enum(["read-only", "workspace-write", "danger-full-access"]);
 const approvalSchema = z.enum(["untrusted", "on-request", "never"]);
+const effortSchema = z.enum(["low", "medium", "high", "xhigh"]);
 
 const createProjectSchema = z.object({
   name: z.string().min(1),
@@ -19,6 +22,7 @@ const createProjectSchema = z.object({
   createDirectory: z.boolean().optional(),
   gitInit: z.boolean().optional(),
   defaultModel: z.string().optional(),
+  defaultReasoningEffort: effortSchema.optional(),
   defaultSandbox: sandboxSchema.optional(),
   defaultApprovalPolicy: approvalSchema.optional()
 });
@@ -26,6 +30,7 @@ const createProjectSchema = z.object({
 const updateProjectSchema = z.object({
   name: z.string().min(1).optional(),
   defaultModel: z.string().optional(),
+  defaultReasoningEffort: effortSchema.optional(),
   defaultSandbox: sandboxSchema.optional(),
   defaultApprovalPolicy: approvalSchema.optional()
 });
@@ -69,6 +74,22 @@ export function registerRoutes(app: FastifyInstance, bridge: CodexBridge, store:
     }
   });
 
+  app.delete<{ Params: { id: string } }>("/api/users/:id", async (request, reply) => {
+    const actingUserId = userIdFromRequest(request);
+    if (actingUserId !== ADMIN_USER_ID) {
+      return reply.code(403).send({ error: "Only admin can delete users." });
+    }
+    if (request.params.id === ADMIN_USER_ID) {
+      return reply.code(400).send({ error: "The admin user cannot be deleted." });
+    }
+
+    const deleted = store.deleteUser(request.params.id);
+    if (!deleted) {
+      return reply.code(404).send({ error: "User not found." });
+    }
+    return { ok: true };
+  });
+
   app.get("/api/projects", async (request) => ({
     data: store.listProjects(userIdFromRequest(request)),
     projectRoot: serverConfig.projectRoot
@@ -106,6 +127,10 @@ export function registerRoutes(app: FastifyInstance, bridge: CodexBridge, store:
         return reply.code(404).send({ error: "User not found." });
       }
       const rootPath = ensureProjectDirectory(input.rootPath, { create: input.createDirectory });
+      const existingProject = store.getProjectByRootPath(rootPath, userId);
+      if (existingProject) {
+        return { data: existingProject };
+      }
 
       if (input.gitInit && !fs.existsSync(`${rootPath}/.git`)) {
         execFileSync("git", ["init"], { cwd: rootPath, stdio: "ignore" });
@@ -148,13 +173,14 @@ export function registerRoutes(app: FastifyInstance, bridge: CodexBridge, store:
       }
 
       try {
-        const result = await bridge.request("thread/list", {
+        const result = await listAllCodexThreads(bridge, {
           cwd: project.rootPath,
-          limit: 50,
+          limit: THREAD_LIST_PAGE_SIZE,
           sortKey: "updated_at",
           sortDirection: "desc",
           archived: request.query.archived === "true",
-          searchTerm: request.query.search || null,
+          // Empty string forces app-server to scan and repair JSONL metadata; null can miss recent cwd-matched threads.
+          searchTerm: request.query.search ?? "",
           useStateDbOnly: false
         });
         return result;
@@ -172,10 +198,19 @@ export function registerRoutes(app: FastifyInstance, bridge: CodexBridge, store:
         return reply.code(404).send({ error: "Project not found." });
       }
 
-      const result = await bridge.request("thread/read", {
-        threadId: request.params.threadId,
-        includeTurns: true
-      });
+      let result: unknown;
+      try {
+        result = await bridge.request("thread/read", {
+          threadId: request.params.threadId,
+          includeTurns: true
+        });
+      } catch (readError) {
+        const fallbackPath = threadJsonlPathFromError(readError);
+        if (!fallbackPath) {
+          throw readError;
+        }
+        result = await readThreadFromJsonl(fallbackPath, request.params.threadId);
+      }
       const thread = (result as { thread?: { cwd?: string } }).thread;
       if (project && thread?.cwd !== project.rootPath) {
         return reply.code(403).send({ error: "Thread is not visible in this user's selected project." });

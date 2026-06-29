@@ -9,7 +9,8 @@ export const serverConfig = {
 };
 
 export const defaults = {
-  sandbox: "workspace-write",
-  approvalPolicy: "on-request",
-  model: ""
+  sandbox: "danger-full-access",
+  approvalPolicy: "never",
+  model: "gpt-5.5",
+  reasoningEffort: "xhigh"
 } as const;

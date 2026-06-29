@@ -122,6 +122,28 @@ button {
   gap: 8px;
 }
 
+.userAdminList {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.userAdminRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.userAdminRow span {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .miniHeader,
 .listHeader {
   display: flex;
@@ -176,13 +198,6 @@ label {
   font-size: 13px;
 }
 
-.fieldLabel {
-  margin-top: 2px;
-  color: #3c403e;
-  font-size: 12px;
-  font-weight: 650;
-}
-
 label input {
   width: 15px;
   height: 15px;
@@ -193,41 +208,6 @@ label input {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
-}
-
-.advancedOptions {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.45);
-  padding: 7px 9px;
-}
-
-.advancedOptions summary {
-  cursor: pointer;
-  color: #3c403e;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.advancedOptions label {
-  margin-top: 8px;
-}
-
-.pathPickerRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-}
-
-.pathPickerRow .iconTextButton {
-  min-width: 96px;
-  white-space: nowrap;
-}
-
-.pathPickerRow input[readonly] {
-  background: #f7f5ef;
-  color: #3c403e;
 }
 
 .iconButton,
@@ -264,6 +244,57 @@ label input {
   color: #ffffff;
 }
 
+.miniDangerButton {
+  height: 28px;
+  border: 1px solid rgba(181, 68, 68, 0.22);
+  border-radius: 7px;
+  background: rgba(181, 68, 68, 0.06);
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.miniDangerButton.confirm {
+  background: rgba(181, 68, 68, 0.14);
+}
+
+.modalScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(28, 31, 30, 0.28);
+}
+
+.confirmDialog {
+  width: min(360px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--panel-strong);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.18);
+}
+
+.confirmDialog h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.confirmDialog p {
+  margin: 10px 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .iconTextButton.danger {
   border-color: rgba(181, 68, 68, 0.32);
   color: var(--red);
@@ -289,7 +320,6 @@ label input {
   gap: 7px;
 }
 
-.projectRow,
 .threadRow,
 .newThreadButton {
   display: grid;
@@ -306,24 +336,20 @@ label input {
   color: var(--text);
 }
 
-.projectRow:hover,
 .threadRow:hover,
 .newThreadButton:hover {
   background: rgba(255, 255, 255, 0.54);
 }
 
-.projectRow.selected,
 .threadRow.selected {
   background: var(--panel-strong);
   border-color: var(--line);
 }
 
-.projectRow span,
 .threadRow span {
   min-width: 0;
 }
 
-.projectRow strong,
 .threadRow strong {
   display: block;
   overflow: hidden;
@@ -332,7 +358,6 @@ label input {
   font-size: 13px;
 }
 
-.projectRow small,
 .threadRow small {
   display: block;
   overflow: hidden;
@@ -340,6 +365,89 @@ label input {
   white-space: nowrap;
   color: var(--muted);
   font-size: 11px;
+}
+
+.projectRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 54px;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 50px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.projectRow:hover {
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.projectRow.selected {
+  background: var(--panel-strong);
+  border-color: var(--line);
+}
+
+.projectSelectButton {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 0 8px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.projectSelectButton span {
+  min-width: 0;
+}
+
+.projectSelectButton strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.projectSelectButton small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.projectDeleteButton {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  justify-self: end;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.projectDeleteButton:hover {
+  border-color: rgba(181, 68, 68, 0.24);
+  background: rgba(181, 68, 68, 0.08);
+  color: var(--red);
+}
+
+.projectDeleteButton.confirm {
+  width: 52px;
+  border-color: rgba(181, 68, 68, 0.32);
+  background: rgba(181, 68, 68, 0.1);
+  color: var(--red);
 }
 
 .threadColumn {
@@ -391,10 +499,10 @@ label input {
 
 .controls {
   display: grid;
-  grid-template-columns: 18px 150px 158px 118px;
+  grid-template-columns: 18px 150px 112px 142px;
   align-items: center;
   gap: 8px;
-  width: min(100%, 470px);
+  width: min(100%, 454px);
 }
 
 .errorBanner {
@@ -673,6 +781,6 @@ pre,
   }
 
   .controls {
-    grid-template-columns: 18px 120px 140px 108px;
+    grid-template-columns: 18px 126px 100px 124px;
   }
 }

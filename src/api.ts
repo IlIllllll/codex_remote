@@ -1,9 +1,11 @@
-import type { Project, ThreadListResponse, ThreadReadResponse, UserProfile } from "./types";
+import type { ApprovalPolicy, Project, ReasoningEffort, SandboxMode, ThreadListResponse, ThreadReadResponse, UserProfile } from "./types";
 
-let currentUserId = localStorage.getItem("codex-web-user-id") || "local";
+const defaultUserId = "admin";
+
+let currentUserId = localStorage.getItem("codex-web-user-id") || defaultUserId;
 
 export function setApiUserId(userId: string): void {
-  currentUserId = userId || "local";
+  currentUserId = userId || defaultUserId;
   localStorage.setItem("codex-web-user-id", currentUserId);
 }
 
@@ -12,18 +14,21 @@ export function getApiUserId(): string {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers = new Headers(options?.headers);
+  headers.set("x-codex-web-user-id", currentUserId);
+  if (options?.body !== undefined && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(path, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      "x-codex-web-user-id": currentUserId,
-      ...options?.headers
-    }
+    headers
   });
 
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(body.error ?? `Request failed: ${response.status}`);
+    const message = body.message ? `${body.error ?? "Request failed"}: ${body.message}` : body.error;
+    throw new Error(message ?? `Request failed: ${response.status}`);
   }
   return body as T;
 }
@@ -39,6 +44,10 @@ export function createUser(input: { name: string }): Promise<{ data: UserProfile
   });
 }
 
+export function deleteUser(id: string): Promise<{ ok: boolean }> {
+  return request(`/api/users/${id}`, { method: "DELETE" });
+}
+
 export function listProjects(): Promise<{ data: Project[]; projectRoot: string }> {
   return request("/api/projects");
 }
@@ -49,8 +58,9 @@ export function createProject(input: {
   createDirectory?: boolean;
   gitInit?: boolean;
   defaultModel?: string;
-  defaultSandbox?: string;
-  defaultApprovalPolicy?: string;
+  defaultReasoningEffort?: ReasoningEffort;
+  defaultSandbox?: SandboxMode;
+  defaultApprovalPolicy?: ApprovalPolicy;
 }): Promise<{ data: Project }> {
   return request("/api/projects", {
     method: "POST",
