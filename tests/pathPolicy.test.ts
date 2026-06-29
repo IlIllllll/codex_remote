@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ensureProjectDirectory, resolveProjectPath } from "../server/pathPolicy.js";
+import { ensureProjectDirectory, resolveProjectFilePath, resolveProjectPath } from "../server/pathPolicy.js";
 
 describe("path policy", () => {
   it("allows paths inside the configured root", () => {
@@ -20,5 +20,24 @@ describe("path policy", () => {
     const target = path.join(root, "new-project");
     expect(ensureProjectDirectory(target, { create: true, allowedRoot: root })).toBe(target);
     expect(fs.statSync(target).isDirectory()).toBe(true);
+  });
+
+  it("resolves project file links with line suffixes", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-root-"));
+    const docs = path.join(root, "docs");
+    fs.mkdirSync(docs);
+    const filePath = path.join(docs, "data_conversion.md");
+    fs.writeFileSync(filePath, "# Data\n");
+    const resolved = resolveProjectFilePath(root, "docs/data_conversion.md:68", { allowedRoot: root });
+    expect(resolved.filePath).toBe(fs.realpathSync(filePath));
+    expect(resolved.relativePath).toBe("docs/data_conversion.md");
+    expect(resolved.line).toBe(68);
+  });
+
+  it("rejects project file links outside the project root", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-root-"));
+    const outside = path.join(os.tmpdir(), `codex-web-outside-${Date.now()}.txt`);
+    fs.writeFileSync(outside, "outside");
+    expect(() => resolveProjectFilePath(root, outside, { allowedRoot: root })).toThrow(/inside the selected project/);
   });
 });

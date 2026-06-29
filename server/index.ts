@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
+import multipart from "@fastify/multipart";
 import Fastify from "fastify";
 import { CodexBridge } from "./codexBridge.js";
 import { serverConfig } from "./config.js";
@@ -29,6 +30,13 @@ const mimeTypes: Record<string, string> = {
 const app = Fastify({ logger: true });
 const store = new ProjectStore();
 const bridge = new CodexBridge();
+
+await app.register(multipart, {
+  limits: {
+    fileSize: 64 * 1024 * 1024,
+    files: 12
+  }
+});
 
 registerRoutes(app, bridge, store);
 

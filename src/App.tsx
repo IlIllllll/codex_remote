@@ -1,33 +1,44 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Bot,
+  FileText,
   FolderOpen,
   GitBranch,
   MessageSquare,
   RefreshCcw,
   Send,
   Settings2,
-  Trash2
+  Trash2,
+  Upload,
+  X
 } from "lucide-react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 import {
   createProject,
   createUser,
   deleteProject,
   deleteUser,
   getApiUserId,
+  fetchProjectFileBlob,
   listProjects,
   listThreads,
   listUsers,
+  previewProjectFile,
   readThread,
   selectDirectory,
-  setApiUserId
+  setApiUserId,
+  uploadProjectFiles
 } from "./api";
 import { codexSocket } from "./codexSocket";
 import type {
   ApprovalPolicy,
   CodexNotification,
   Project,
+  ProjectFile,
+  ProjectFilePreview,
   ReasoningEffort,
   SandboxMode,
   SocketMessage,
@@ -199,6 +210,99 @@ const modelProfiles: ModelProfile[] = [
 
 const defaultModelProfileId = "gpt-5.5:xhigh";
 const adminUserId = "admin";
+const markdownRemarkPlugins = [remarkGfm, remarkBreaks];
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function fileTargetFromHref(href?: string): string | null {
+  if (!href || href.startsWith("#")) {
+    return null;
+  }
+
+  if (/^file:\/\//i.test(href)) {
+    return href;
+  }
+
+  if (/^https?:\/\//i.test(href)) {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const parsed = new URL(href, window.location.href);
+    if (parsed.origin !== window.location.origin || parsed.pathname.startsWith("/api/")) {
+      return null;
+    }
+    return `${safeDecodeURIComponent(parsed.pathname)}${parsed.hash}`;
+  }
+
+  if (href.startsWith("/")) {
+    if (href.startsWith("/api/")) {
+      return null;
+    }
+    return safeDecodeURIComponent(href);
+  }
+
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+    return null;
+  }
+
+  return href;
+}
+
+function MarkdownMessage({ text, onOpenFileLink }: { text: string; onOpenFileLink?: (target: string) => void }) {
+  const markdownComponents = useMemo<Components>(
+    () => ({
+      a({ children, href, ...props }) {
+        const fileTarget = fileTargetFromHref(href);
+        return (
+          <a
+            href={href}
+            rel="noreferrer"
+            target={fileTarget ? undefined : "_blank"}
+            onClick={(event) => {
+              if (!fileTarget || !onOpenFileLink) {
+                return;
+              }
+              event.preventDefault();
+              onOpenFileLink(fileTarget);
+            }}
+            {...props}
+          >
+            {children}
+          </a>
+        );
+      }
+    }),
+    [onOpenFileLink]
+  );
+
+  return (
+    <div className="messageMarkdown">
+      <ReactMarkdown components={markdownComponents} remarkPlugins={markdownRemarkPlugins}>
+        {text || " "}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function uploadedFileMarkdown(files: ProjectFile[]): string {
+  return files.map((file) => `- [${file.name}](${file.relativePath})`).join("\n");
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
 function modelProfileById(id: string): ModelProfile {
   return modelProfiles.find((profile) => profile.id === id) ?? modelProfiles[0];
@@ -209,6 +313,7 @@ function modelProfileIdFor(model: string, effort: ReasoningEffort): string {
 }
 
 export function App() {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [selectedUserId, setSelectedUserId] = useState(getApiUserId());
@@ -230,6 +335,13 @@ export function App() {
   const [pendingUserMessages, setPendingUserMessages] = useState<
     Array<{ id: string; requestId: string; threadId: string | null; text: string }>
   >([]);
+  const [uploadedFiles, setUploadedFiles] = useState<ProjectFile[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [filePreview, setFilePreview] = useState<ProjectFilePreview | null>(null);
+  const [filePreviewObjectUrl, setFilePreviewObjectUrl] = useState<string>("");
+  const [filePreviewLoading, setFilePreviewLoading] = useState(false);
+  const [filePreviewError, setFilePreviewError] = useState("");
+  const [handledLocationFileTarget, setHandledLocationFileTarget] = useState(false);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
 
@@ -259,6 +371,9 @@ export function App() {
     setThreads([]);
     setLiveDeltas({});
     setPendingUserMessages([]);
+    setUploadedFiles([]);
+    setFilePreview(null);
+    setFilePreviewObjectUrl("");
     setPendingDeleteProjectId(null);
     setPendingDeleteUserId(null);
     void refreshProjects();
@@ -270,11 +385,22 @@ export function App() {
     }
     setLiveDeltas({});
     setPendingUserMessages([]);
+    setUploadedFiles([]);
+    setFilePreview(null);
+    setFilePreviewObjectUrl("");
     setModelProfileId(modelProfileIdFor(selectedProject.defaultModel || "gpt-5.5", selectedProject.defaultReasoningEffort || "xhigh"));
     setSandbox(selectedProject.defaultSandbox || "danger-full-access");
     setApprovalPolicy(selectedProject.defaultApprovalPolicy || "never");
     void refreshThreads(selectedProject.id);
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    return () => {
+      if (filePreviewObjectUrl) {
+        URL.revokeObjectURL(filePreviewObjectUrl);
+      }
+    };
+  }, [filePreviewObjectUrl]);
 
   async function refreshProjects() {
     try {
@@ -446,6 +572,82 @@ export function App() {
     }
     void removeProject(project);
   }
+
+  async function handleFileUpload(files: FileList | null) {
+    if (!selectedProject || !files?.length) {
+      return;
+    }
+    setUploadingFiles(true);
+    setError("");
+    try {
+      const response = await uploadProjectFiles(selectedProject.id, files);
+      setUploadedFiles((current) => [...response.data, ...current]);
+      const markdown = uploadedFileMarkdown(response.data);
+      setPrompt((current) => {
+        const prefix = current.trim() ? `${current.trim()}\n\n` : "";
+        return `${prefix}上传文件：\n${markdown}`;
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setUploadingFiles(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  }
+
+  function closeFilePreview() {
+    setFilePreview(null);
+    setFilePreviewError("");
+    setFilePreviewLoading(false);
+    setFilePreviewObjectUrl((current) => {
+      if (current) {
+        URL.revokeObjectURL(current);
+      }
+      return "";
+    });
+  }
+
+  async function openFilePreview(filePath: string) {
+    if (!selectedProject) {
+      return;
+    }
+    setFilePreviewLoading(true);
+    setFilePreviewError("");
+    setFilePreview(null);
+    setFilePreviewObjectUrl((current) => {
+      if (current) {
+        URL.revokeObjectURL(current);
+      }
+      return "";
+    });
+    try {
+      const response = await previewProjectFile(selectedProject.id, filePath);
+      setFilePreview(response.data);
+      if (response.data.kind === "image" || response.data.kind === "pdf") {
+        const blob = await fetchProjectFileBlob(selectedProject.id, response.data.relativePath);
+        setFilePreviewObjectUrl(URL.createObjectURL(blob));
+      }
+    } catch (caught) {
+      setFilePreviewError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setFilePreviewLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (handledLocationFileTarget || !selectedProject || typeof window === "undefined") {
+      return;
+    }
+    const target = fileTargetFromHref(window.location.href);
+    if (!target || !target.startsWith(selectedProject.rootPath)) {
+      return;
+    }
+    setHandledLocationFileTarget(true);
+    window.history.replaceState(null, "", "/");
+    void openFilePreview(target);
+  }, [handledLocationFileTarget, selectedProjectId]);
 
   function sendPrompt() {
     const promptText = prompt.trim();
@@ -781,7 +983,11 @@ export function App() {
                 return items.map((item) => (
                   <article className={messageClassName(item)} key={`${turn.id}-${item.id}`}>
                     <div className="messageMeta">{itemLabel(item)}</div>
-                    {item.command ? <pre>{safeText(item.command)}</pre> : <p>{itemText(item)}</p>}
+                    {item.command ? (
+                      <pre>{safeText(item.command)}</pre>
+                    ) : (
+                      <MarkdownMessage text={itemText(item)} onOpenFileLink={(target) => void openFilePreview(target)} />
+                    )}
                     {item.aggregatedOutput ? <pre className="outputBlock">{safeText(item.aggregatedOutput)}</pre> : null}
                   </article>
                 ));
@@ -796,14 +1002,14 @@ export function App() {
                 return (
                   <article className={messageClassName(item, "live pending")} key={entry.id}>
                     <div className="messageMeta">用户 · sending</div>
-                    <p>{entry.text}</p>
+                    <MarkdownMessage text={entry.text} onOpenFileLink={(target) => void openFilePreview(target)} />
                   </article>
                 );
               })}
               {allLiveMessages.map((entry) => (
                 <article className="messageItem kind-agent type-agentMessage live" key={entry.id}>
                   <div className="messageMeta">Codex · agentMessage</div>
-                  <p>{entry.text}</p>
+                  <MarkdownMessage text={entry.text} onOpenFileLink={(target) => void openFilePreview(target)} />
                 </article>
               ))}
               {!selectedThread && allLiveMessages.length === 0 && visiblePendingUserMessages.length === 0 ? (
@@ -811,16 +1017,54 @@ export function App() {
               ) : null}
             </div>
             <div className="composer">
-              <textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onKeyDown={(event) => {
-                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                    sendPrompt();
-                  }
-                }}
-                placeholder="Ask Codex to work in this project"
-              />
+              <div className="composerBody">
+                <div className="composerTools">
+                  <input
+                    ref={fileInputRef}
+                    className="hiddenFileInput"
+                    multiple
+                    type="file"
+                    onChange={(event) => void handleFileUpload(event.target.files)}
+                  />
+                  <button
+                    className="iconTextButton"
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={!selectedProject || uploadingFiles}
+                  >
+                    <Upload size={15} />
+                    {uploadingFiles ? "上传中" : "上传文件"}
+                  </button>
+                  {uploadedFiles.length ? <span className="uploadCount">{uploadedFiles.length} 个文件</span> : null}
+                </div>
+                {uploadedFiles.length ? (
+                  <div className="uploadedFileList">
+                    {uploadedFiles.slice(0, 6).map((file) => (
+                      <button
+                        className="uploadedFileChip"
+                        key={file.relativePath}
+                        type="button"
+                        onClick={() => void openFilePreview(file.relativePath)}
+                        title={file.relativePath}
+                      >
+                        <FileText size={14} />
+                        <span>{file.name}</span>
+                        <small>{formatBytes(file.size)}</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <textarea
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  onKeyDown={(event) => {
+                    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                      sendPrompt();
+                    }
+                  }}
+                  placeholder="Ask Codex to work in this project"
+                />
+              </div>
               <button className="iconButton primary sendButton" type="button" onClick={sendPrompt} disabled={!selectedProject || !prompt.trim()}>
                 <Send size={18} />
               </button>
@@ -828,6 +1072,53 @@ export function App() {
           </section>
         </div>
       </section>
+
+      {filePreview || filePreviewLoading || filePreviewError ? (
+        <div className="modalScrim filePreviewScrim" role="dialog" aria-modal="true" aria-labelledby="file-preview-title">
+          <section className="filePreviewDialog">
+            <header className="filePreviewHeader">
+              <div>
+                <h2 id="file-preview-title">{filePreview?.name ?? "文件预览"}</h2>
+                <p>
+                  {filePreview?.relativePath ?? filePreviewError}
+                  {filePreview?.line ? <span>:{filePreview.line}</span> : null}
+                </p>
+              </div>
+              <button className="iconButton" type="button" onClick={closeFilePreview} title="Close preview">
+                <X size={17} />
+              </button>
+            </header>
+            <div className="filePreviewBody">
+              {filePreviewLoading ? <div className="emptyState">Loading file preview.</div> : null}
+              {!filePreviewLoading && filePreviewError ? <div className="filePreviewError">{filePreviewError}</div> : null}
+              {!filePreviewLoading && filePreview ? (
+                <>
+                  {filePreview.kind === "markdown" ? (
+                    <div className="fileMarkdownPreview">
+                      <MarkdownMessage text={filePreview.content ?? ""} onOpenFileLink={(target) => void openFilePreview(target)} />
+                    </div>
+                  ) : null}
+                  {filePreview.kind === "text" ? <pre className="fileTextPreview">{filePreview.content ?? ""}</pre> : null}
+                  {filePreview.kind === "image" && filePreviewObjectUrl ? (
+                    <img className="fileImagePreview" src={filePreviewObjectUrl} alt={filePreview.name} />
+                  ) : null}
+                  {filePreview.kind === "pdf" && filePreviewObjectUrl ? (
+                    <iframe className="filePdfPreview" src={filePreviewObjectUrl} title={filePreview.name} />
+                  ) : null}
+                  {filePreview.kind === "binary" ? (
+                    <div className="fileBinaryPreview">
+                      <FileText size={28} />
+                      <strong>{filePreview.mime}</strong>
+                      <span>{formatBytes(filePreview.size)}</span>
+                    </div>
+                  ) : null}
+                  {filePreview.truncated ? <p className="previewHint">Preview truncated at 2 MB.</p> : null}
+                </>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }

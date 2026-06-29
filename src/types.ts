@@ -95,3 +95,19 @@ export interface CodexNotification {
   method?: string;
   params?: Record<string, unknown>;
 }
+
+export interface ProjectFile {
+  name: string;
+  path: string;
+  relativePath: string;
+  size: number;
+  mime: string;
+  rawUrl: string;
+}
+
+export interface ProjectFilePreview extends ProjectFile {
+  line: number | null;
+  kind: "markdown" | "text" | "image" | "pdf" | "binary";
+  truncated: boolean;
+  content?: string;
+}

@@ -611,10 +611,97 @@ label input {
   border-style: dashed;
 }
 
-.messageItem p {
-  margin: 6px 0 0;
-  white-space: pre-wrap;
+.messageMarkdown {
+  margin-top: 6px;
+  overflow-wrap: anywhere;
   line-height: 1.48;
+}
+
+.messageMarkdown > :first-child {
+  margin-top: 0;
+}
+
+.messageMarkdown > :last-child {
+  margin-bottom: 0;
+}
+
+.messageMarkdown p,
+.messageMarkdown ul,
+.messageMarkdown ol,
+.messageMarkdown blockquote,
+.messageMarkdown table,
+.messageMarkdown pre {
+  margin: 8px 0 0;
+}
+
+.messageMarkdown h1,
+.messageMarkdown h2,
+.messageMarkdown h3,
+.messageMarkdown h4 {
+  margin: 12px 0 0;
+  line-height: 1.25;
+}
+
+.messageMarkdown h1 {
+  font-size: 20px;
+}
+
+.messageMarkdown h2 {
+  font-size: 17px;
+}
+
+.messageMarkdown h3,
+.messageMarkdown h4 {
+  font-size: 15px;
+}
+
+.messageMarkdown ul,
+.messageMarkdown ol {
+  padding-left: 22px;
+}
+
+.messageMarkdown li + li {
+  margin-top: 4px;
+}
+
+.messageMarkdown blockquote {
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid rgba(32, 127, 120, 0.28);
+  color: #4f5a57;
+}
+
+.messageMarkdown a {
+  color: var(--teal-dark);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.messageMarkdown table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  max-width: 100%;
+}
+
+.messageMarkdown th,
+.messageMarkdown td {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.messageMarkdown th {
+  background: rgba(35, 38, 37, 0.06);
+  font-weight: 700;
+}
+
+.messageMarkdown :not(pre) > code {
+  border-radius: 4px;
+  padding: 1px 4px;
+  background: rgba(35, 38, 37, 0.08);
+  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.92em;
 }
 
 .messageMeta {
@@ -647,10 +734,165 @@ pre,
   background: #f7f5ef;
 }
 
+.composerBody {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composerTools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.hiddenFileInput {
+  display: none;
+}
+
+.uploadCount {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.uploadedFileList {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.uploadedFileChip {
+  display: inline-grid;
+  grid-template-columns: 14px minmax(60px, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  min-height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(32, 127, 120, 0.22);
+  border-radius: 7px;
+  padding: 0 8px;
+  background: #eef8f5;
+  color: var(--text);
+}
+
+.uploadedFileChip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.uploadedFileChip small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .sendButton {
   align-self: end;
   width: 42px;
   height: 42px;
+}
+
+.filePreviewScrim {
+  z-index: 80;
+}
+
+.filePreviewDialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(980px, calc(100vw - 48px));
+  height: min(760px, calc(100vh - 48px));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.22);
+}
+
+.filePreviewHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.filePreviewHeader h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.filePreviewHeader p {
+  margin: 4px 0 0;
+  overflow: hidden;
+  max-width: 820px;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filePreviewBody {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.fileMarkdownPreview {
+  max-width: 840px;
+}
+
+.fileMarkdownPreview .messageMarkdown {
+  margin-top: 0;
+}
+
+.fileTextPreview {
+  max-height: none;
+  margin: 0;
+}
+
+.fileImagePreview {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.filePdfPreview {
+  width: 100%;
+  min-height: 640px;
+  border: 0;
+}
+
+.fileBinaryPreview {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 240px;
+  color: var(--muted);
+}
+
+.fileBinaryPreview strong {
+  color: var(--text);
+}
+
+.filePreviewError {
+  border: 1px solid rgba(181, 68, 68, 0.35);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff2f0;
+  color: var(--red);
+}
+
+.previewHint {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .emptyState {

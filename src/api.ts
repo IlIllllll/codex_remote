@@ -1,4 +1,14 @@
-import type { ApprovalPolicy, Project, ReasoningEffort, SandboxMode, ThreadListResponse, ThreadReadResponse, UserProfile } from "./types";
+import type {
+  ApprovalPolicy,
+  Project,
+  ProjectFile,
+  ProjectFilePreview,
+  ReasoningEffort,
+  SandboxMode,
+  ThreadListResponse,
+  ThreadReadResponse,
+  UserProfile
+} from "./types";
 
 const defaultUserId = "admin";
 
@@ -16,7 +26,8 @@ export function getApiUserId(): string {
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
   headers.set("x-codex-web-user-id", currentUserId);
-  if (options?.body !== undefined && !headers.has("Content-Type")) {
+  const isFormData = typeof FormData !== "undefined" && options?.body instanceof FormData;
+  if (options?.body !== undefined && !isFormData && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -93,4 +104,30 @@ export function listThreads(projectId: string): Promise<ThreadListResponse> {
 export function readThread(threadId: string, projectId?: string): Promise<ThreadReadResponse> {
   const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
   return request(`/api/threads/${threadId}${suffix}`);
+}
+
+export function uploadProjectFiles(projectId: string, files: FileList | File[]): Promise<{ data: ProjectFile[] }> {
+  const form = new FormData();
+  for (const file of Array.from(files)) {
+    form.append("files", file);
+  }
+  return request(`/api/projects/${projectId}/files/upload`, {
+    method: "POST",
+    body: form
+  });
+}
+
+export function previewProjectFile(projectId: string, filePath: string): Promise<{ data: ProjectFilePreview }> {
+  return request(`/api/projects/${projectId}/files/preview?path=${encodeURIComponent(filePath)}`);
+}
+
+export async function fetchProjectFileBlob(projectId: string, filePath: string): Promise<Blob> {
+  const headers = new Headers();
+  headers.set("x-codex-web-user-id", currentUserId);
+  const response = await fetch(`/api/projects/${projectId}/files/raw?path=${encodeURIComponent(filePath)}`, { headers });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error ?? `Request failed: ${response.status}`);
+  }
+  return response.blob();
 }
