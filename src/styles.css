@@ -25,7 +25,7 @@
 
 body {
   margin: 0;
-  min-width: 1120px;
+  min-width: 900px;
   min-height: 100vh;
   background: var(--bg);
 }
@@ -43,24 +43,16 @@ button {
 
 .appShell {
   display: grid;
-  grid-template-columns: 280px minmax(480px, 1fr) 420px;
+  grid-template-columns: 280px minmax(620px, 1fr);
   height: 100vh;
   overflow: hidden;
 }
 
-.sidebar,
-.rightRail {
+.sidebar {
   background: #e8e4d9;
   border-right: 1px solid var(--line);
   min-height: 0;
   overflow: hidden;
-}
-
-.rightRail {
-  display: grid;
-  grid-template-rows: minmax(300px, 42%) minmax(160px, 26%) minmax(160px, 1fr);
-  border-right: 0;
-  border-left: 1px solid var(--line);
 }
 
 .sidebar {
@@ -308,9 +300,7 @@ label input {
 
 .projectList,
 .threadList,
-.messages,
-.activityList,
-.approvalList {
+.messages {
   min-height: 0;
   overflow: auto;
 }
@@ -506,6 +496,7 @@ label input {
 }
 
 .errorBanner {
+  grid-row: 2;
   margin: 10px 14px 0;
   padding: 9px 12px;
   border: 1px solid rgba(181, 68, 68, 0.35);
@@ -516,6 +507,7 @@ label input {
 }
 
 .workspace {
+  grid-row: 3;
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
   min-height: 0;
@@ -550,8 +542,7 @@ label input {
   background: var(--panel);
 }
 
-.conversationHeader,
-.paneHeader {
+.conversationHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -560,14 +551,12 @@ label input {
   border-bottom: 1px solid var(--line);
 }
 
-.conversationHeader h2,
-.paneHeader h2 {
+.conversationHeader h2 {
   margin: 0;
   font-size: 15px;
 }
 
-.conversationHeader span,
-.paneHeader p {
+.conversationHeader span {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
@@ -588,17 +577,38 @@ label input {
   background: var(--panel-strong);
 }
 
-.messageItem.userMessage {
+.messageItem.userMessage,
+.messageItem.kind-user {
+  align-self: flex-end;
+  max-width: min(760px, 78%);
   margin-left: auto;
+  background: #e8f4f1;
   border-color: rgba(32, 127, 120, 0.35);
 }
 
-.messageItem.agentMessage {
+.messageItem.agentMessage,
+.messageItem.kind-agent {
+  align-self: flex-start;
+  background: #fffaf0;
   border-color: rgba(181, 107, 22, 0.28);
 }
 
-.messageItem.commandExecution {
+.messageItem.commandExecution,
+.messageItem.kind-tool {
+  background: #f1f3f2;
   border-color: rgba(35, 38, 37, 0.22);
+}
+
+.messageItem.kind-system {
+  background: #f4f1ea;
+}
+
+.messageItem.live {
+  box-shadow: 0 6px 18px rgba(35, 38, 37, 0.06);
+}
+
+.messageItem.pending {
+  border-style: dashed;
 }
 
 .messageItem p {
@@ -643,122 +653,6 @@ pre,
   height: 42px;
 }
 
-.terminalPane,
-.approvalPanel,
-.activityPane {
-  min-height: 0;
-  background: #ece8df;
-  border-bottom: 1px solid var(--line);
-}
-
-.terminalPane {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.commandBar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px 34px;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
-}
-
-.terminalCanvas {
-  min-height: 0;
-  padding: 8px;
-  background: #101214;
-}
-
-.sandboxBadge {
-  border: 1px solid rgba(32, 127, 120, 0.25);
-  border-radius: 999px;
-  padding: 4px 8px;
-  color: var(--teal-dark);
-  font-size: 11px;
-}
-
-.sandboxBadge.danger {
-  border-color: rgba(181, 68, 68, 0.32);
-  color: var(--red);
-}
-
-.approvalPanel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.approvalList,
-.activityList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-}
-
-.approvalItem,
-.activityItem {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-strong);
-  padding: 10px;
-}
-
-.approvalTitle {
-  font-weight: 700;
-}
-
-.approvalActions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-
-.muted {
-  color: var(--muted);
-}
-
-.activityPane {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  border-bottom: 0;
-}
-
-.activityItem {
-  display: grid;
-  gap: 4px;
-}
-
-.activityItem time {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.activityItem strong {
-  font-size: 13px;
-}
-
-.activityItem p {
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.activityItem.good {
-  border-color: rgba(32, 127, 120, 0.25);
-}
-
-.activityItem.warn {
-  border-color: rgba(181, 107, 22, 0.35);
-}
-
-.activityItem.bad {
-  border-color: rgba(181, 68, 68, 0.35);
-}
-
 .emptyState {
   display: grid;
   min-height: 84px;
@@ -769,11 +663,11 @@ pre,
 
 @media (max-width: 1220px) {
   body {
-    min-width: 980px;
+    min-width: 820px;
   }
 
   .appShell {
-    grid-template-columns: 240px minmax(420px, 1fr) 360px;
+    grid-template-columns: 240px minmax(580px, 1fr);
   }
 
   .workspace {

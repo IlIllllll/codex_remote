@@ -24,20 +24,16 @@ import {
   setApiUserId
 } from "./api";
 import { codexSocket } from "./codexSocket";
-import { ApprovalPanel } from "./components/ApprovalPanel";
-import { TerminalPane } from "./components/TerminalPane";
 import type {
-  ActivityEvent,
   ApprovalPolicy,
   CodexNotification,
-  CodexServerRequest,
   Project,
   ReasoningEffort,
   SandboxMode,
   SocketMessage,
-  TerminalOutputEvent,
   ThreadItem,
   ThreadSummary,
+  Turn,
   UserProfile
 } from "./types";
 
@@ -71,12 +67,41 @@ function statusText(status: unknown): string {
   return safeText(status);
 }
 
-function itemText(item: ThreadItem): string {
-  if (item.text) {
-    return safeText(item.text);
+function textFromStructuredValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
   }
-  if (item.content?.length) {
-    return item.content.map((part) => safeText(part.text ?? part.path ?? part.url ?? "")).join("\n");
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(textFromStructuredValue).filter(Boolean).join("\n");
+  }
+  if (typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    for (const key of ["text", "message", "prompt", "input", "value", "content", "markdown", "body"]) {
+      const text = textFromStructuredValue(object[key]);
+      if (text.trim()) {
+        return text;
+      }
+    }
+    if (typeof object.path === "string") {
+      return object.path;
+    }
+    if (typeof object.url === "string") {
+      return object.url;
+    }
+  }
+  return "";
+}
+
+function itemText(item: ThreadItem): string {
+  const text = textFromStructuredValue(item.text ?? item.message ?? item.content ?? item.input ?? item.prompt ?? item.value ?? item.output);
+  if (text.trim()) {
+    return text;
   }
   if (item.command) {
     return safeText(item.command);
@@ -85,6 +110,69 @@ function itemText(item: ThreadItem): string {
     return item.summary.map(safeText).join("\n");
   }
   return "";
+}
+
+type MessageKind = "user" | "agent" | "tool" | "system";
+
+function normalizedToken(value: unknown): string {
+  return safeText(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function itemKind(item: ThreadItem): MessageKind {
+  const token = `${normalizedToken(item.role)} ${normalizedToken(item.type)} ${normalizedToken(item.tool)}`;
+  if (token.includes("user")) {
+    return "user";
+  }
+  if (token.includes("assistant") || token.includes("agent")) {
+    return "agent";
+  }
+  if (token.includes("tool") || token.includes("command") || item.command || item.aggregatedOutput) {
+    return "tool";
+  }
+  return "system";
+}
+
+function itemLabel(item: ThreadItem): string {
+  const type = safeText(item.type);
+  if (itemKind(item) === "user") {
+    return type ? `用户 · ${type}` : "用户";
+  }
+  if (itemKind(item) === "agent") {
+    return type ? `Codex · ${type}` : "Codex";
+  }
+  if (itemKind(item) === "tool") {
+    return item.tool ? `工具 · ${item.tool}` : type || "工具";
+  }
+  return type || "系统";
+}
+
+function messageClassName(item: ThreadItem, extraClass = ""): string {
+  const typeClass = `type-${safeText(item.type || "message").replace(/[^a-zA-Z0-9_-]+/g, "-")}`;
+  return ["messageItem", `kind-${itemKind(item)}`, typeClass, extraClass].filter(Boolean).join(" ");
+}
+
+function turnUserText(turn: Turn): string {
+  for (const value of [turn.userMessage, turn.prompt, turn.input, turn.message, turn.request, turn.submission]) {
+    const text = textFromStructuredValue(value);
+    if (text.trim()) {
+      return text;
+    }
+  }
+  return "";
+}
+
+function turnHasUserItem(turn: Turn): boolean {
+  return (turn.items ?? []).some((item) => itemKind(item) === "user" && itemText(item).trim());
+}
+
+function threadHasUserText(thread: ThreadSummary, text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) {
+    return true;
+  }
+  return (thread.turns ?? []).some((turn) =>
+    (turn.items ?? []).some((item) => itemKind(item) === "user" && itemText(item).trim() === normalized)
+  );
 }
 
 function formatTime(seconds: number): string {
@@ -120,33 +208,6 @@ function modelProfileIdFor(model: string, effort: ReasoningEffort): string {
   return modelProfiles.find((profile) => profile.model === model && profile.effort === effort)?.id ?? defaultModelProfileId;
 }
 
-function notificationTitle(notification: CodexNotification): ActivityEvent {
-  const method = notification.method ?? "event";
-  const params = notification.params ?? {};
-  const item = params.item as ThreadItem | undefined;
-  if (method === "item/completed" && item) {
-    return {
-      id: crypto.randomUUID(),
-      time: new Date().toLocaleTimeString(),
-      title: `${item.type} completed`,
-      detail: itemText(item).slice(0, 180),
-      tone: item.type === "commandExecution" && item.exitCode ? "warn" : "normal"
-    };
-  }
-  if (method === "turn/completed") {
-    return { id: crypto.randomUUID(), time: new Date().toLocaleTimeString(), title: "Turn completed", tone: "good" };
-  }
-  if (method === "error") {
-    return { id: crypto.randomUUID(), time: new Date().toLocaleTimeString(), title: "Codex error", detail: JSON.stringify(params), tone: "bad" };
-  }
-  return {
-    id: crypto.randomUUID(),
-    time: new Date().toLocaleTimeString(),
-    title: method,
-    detail: JSON.stringify(params).slice(0, 180)
-  };
-}
-
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -165,10 +226,10 @@ export function App() {
   const [sandbox, setSandbox] = useState<SandboxMode>("danger-full-access");
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>("never");
   const [socketStatus, setSocketStatus] = useState<"connecting" | "open" | "closed">("closed");
-  const [activity, setActivity] = useState<ActivityEvent[]>([]);
-  const [approvals, setApprovals] = useState<CodexServerRequest[]>([]);
-  const [terminalOutputs, setTerminalOutputs] = useState<TerminalOutputEvent[]>([]);
   const [liveDeltas, setLiveDeltas] = useState<Record<string, string>>({});
+  const [pendingUserMessages, setPendingUserMessages] = useState<
+    Array<{ id: string; requestId: string; threadId: string | null; text: string }>
+  >([]);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
 
@@ -196,6 +257,8 @@ export function App() {
     setSelectedProjectId("");
     setSelectedThread(null);
     setThreads([]);
+    setLiveDeltas({});
+    setPendingUserMessages([]);
     setPendingDeleteProjectId(null);
     setPendingDeleteUserId(null);
     void refreshProjects();
@@ -205,6 +268,8 @@ export function App() {
     if (!selectedProject) {
       return;
     }
+    setLiveDeltas({});
+    setPendingUserMessages([]);
     setModelProfileId(modelProfileIdFor(selectedProject.defaultModel || "gpt-5.5", selectedProject.defaultReasoningEffort || "xhigh"));
     setSandbox(selectedProject.defaultSandbox || "danger-full-access");
     setApprovalPolicy(selectedProject.defaultApprovalPolicy || "never");
@@ -304,6 +369,9 @@ export function App() {
       const response = await readThread(threadId, selectedProjectId);
       setSelectedThread(response.thread);
       setLiveDeltas({});
+      setPendingUserMessages((current) =>
+        current.filter((entry) => entry.threadId && entry.threadId !== response.thread.id ? true : !threadHasUserText(response.thread, entry.text))
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -380,7 +448,8 @@ export function App() {
   }
 
   function sendPrompt() {
-    if (!selectedProject || !prompt.trim()) {
+    const promptText = prompt.trim();
+    if (!selectedProject || !promptText) {
       return;
     }
     const requestId = `thread-${crypto.randomUUID()}`;
@@ -391,7 +460,7 @@ export function App() {
           userId: selectedUserId,
           projectId: selectedProject.id,
           threadId: selectedThread.id,
-          prompt,
+          prompt: promptText,
           model: selectedModelProfile.model,
           reasoningEffort: selectedModelProfile.effort,
           sandbox,
@@ -402,14 +471,23 @@ export function App() {
           requestId,
           userId: selectedUserId,
           projectId: selectedProject.id,
-          prompt,
+          prompt: promptText,
           model: selectedModelProfile.model,
           reasoningEffort: selectedModelProfile.effort,
           sandbox,
           approvalPolicy
-        };
+    };
     try {
       codexSocket.send(payload);
+      setPendingUserMessages((current) => [
+        ...current,
+        {
+          id: `user-${requestId}`,
+          requestId,
+          threadId: selectedThread?.id ?? null,
+          text: promptText
+        }
+      ]);
       setPrompt("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -427,6 +505,11 @@ export function App() {
       if (newThread?.id) {
         setSelectedThread(newThread);
         setSelectedThread((current) => (current ? { ...current, turns: current.turns ?? [] } : current));
+        if (message.requestId) {
+          setPendingUserMessages((current) =>
+            current.map((entry) => (entry.requestId === message.requestId ? { ...entry, threadId: newThread.id } : entry))
+          );
+        }
       }
       if (data?.turn?.turn?.id) {
         setActiveTurnId(data.turn.turn.id);
@@ -435,24 +518,8 @@ export function App() {
       return;
     }
 
-    if (message.type === "codex.serverRequest") {
-      const request = message.data as CodexServerRequest;
-      setApprovals((current) => [request, ...current.filter((entry) => entry.id !== request.id)]);
-      setActivity((current) => [
-        { id: crypto.randomUUID(), time: new Date().toLocaleTimeString(), title: request.method, tone: "warn" as const },
-        ...current
-      ].slice(0, 100));
-      return;
-    }
-
-    if (message.type === "terminal.output") {
-      setTerminalOutputs((current) => [...current, message.data as TerminalOutputEvent]);
-      return;
-    }
-
     if (message.type === "codex.notification") {
       const notification = message.data as CodexNotification;
-      setActivity((current) => [notificationTitle(notification), ...current].slice(0, 100));
       const params = notification.params ?? {};
       if (notification.method === "item/agentMessage/delta") {
         const itemId = String(params.itemId ?? "");
@@ -476,58 +543,15 @@ export function App() {
       }
       return;
     }
-
-    if (message.type === "codex.stderr") {
-      setActivity((current) => [
-        {
-          id: crypto.randomUUID(),
-          time: new Date().toLocaleTimeString(),
-          title: "app-server stderr",
-          detail: String(message.data),
-          tone: "warn" as const
-        },
-        ...current
-      ].slice(0, 100));
-    }
-  }
-
-  function respondToApproval(request: CodexServerRequest, decision: "accept" | "acceptForSession" | "decline" | "cancel") {
-    const result = request.method.includes("commandExecution") || request.method.includes("fileChange")
-      ? { decision }
-      : { answers: {} };
-    codexSocket.send({
-      type: "approval.respond",
-      codexRequestId: request.id,
-      result
-    });
-    setApprovals((current) => current.filter((entry) => entry.id !== request.id));
-  }
-
-  function execCommand(command: string, processId: string) {
-    if (!selectedProject) {
-      return;
-    }
-    codexSocket.send({
-      type: "command.exec",
-      projectId: selectedProject.id,
-      processId,
-      command: ["/bin/zsh", "-lc", command],
-      userId: selectedUserId,
-      tty: true,
-      sandbox,
-      disableTimeout: false
-    });
-  }
-
-  function writeCommand(processId: string, data: string) {
-    codexSocket.send({ type: "command.write", processId, data });
-  }
-
-  function terminateCommand(processId: string) {
-    codexSocket.send({ type: "command.terminate", processId });
   }
 
   const allLiveMessages = Object.entries(liveDeltas).map(([id, text]) => ({ id, text }));
+  const visiblePendingUserMessages = pendingUserMessages.filter((entry) => {
+    if (!selectedThread?.id) {
+      return entry.threadId === null;
+    }
+    return entry.threadId === null || entry.threadId === selectedThread.id;
+  });
 
   return (
     <main className="appShell">
@@ -743,22 +767,48 @@ export function App() {
               <span>{activeTurnId ? "running" : statusText(selectedThread?.status)}</span>
             </div>
             <div className="messages">
-              {(selectedThread?.turns ?? []).flatMap((turn) =>
-                (turn.items ?? []).map((item) => (
-                  <article className={`messageItem ${item.type}`} key={`${turn.id}-${item.id}`}>
-                    <div className="messageMeta">{safeText(item.type)}</div>
+              {(selectedThread?.turns ?? []).flatMap((turn) => {
+                const syntheticUserText = turnHasUserItem(turn) ? "" : turnUserText(turn);
+                const syntheticUserItem: ThreadItem | null = syntheticUserText.trim()
+                  ? {
+                      id: `${turn.id}-user-input`,
+                      type: "userMessage",
+                      role: "user",
+                      text: syntheticUserText
+                    }
+                  : null;
+                const items = syntheticUserItem ? [syntheticUserItem, ...(turn.items ?? [])] : turn.items ?? [];
+                return items.map((item) => (
+                  <article className={messageClassName(item)} key={`${turn.id}-${item.id}`}>
+                    <div className="messageMeta">{itemLabel(item)}</div>
                     {item.command ? <pre>{safeText(item.command)}</pre> : <p>{itemText(item)}</p>}
                     {item.aggregatedOutput ? <pre className="outputBlock">{safeText(item.aggregatedOutput)}</pre> : null}
                   </article>
-                ))
-              )}
+                ));
+              })}
+              {visiblePendingUserMessages.map((entry) => {
+                const item: ThreadItem = {
+                  id: entry.id,
+                  type: "userMessage",
+                  role: "user",
+                  text: entry.text
+                };
+                return (
+                  <article className={messageClassName(item, "live pending")} key={entry.id}>
+                    <div className="messageMeta">用户 · sending</div>
+                    <p>{entry.text}</p>
+                  </article>
+                );
+              })}
               {allLiveMessages.map((entry) => (
-                <article className="messageItem agentMessage live" key={entry.id}>
-                  <div className="messageMeta">agentMessage</div>
+                <article className="messageItem kind-agent type-agentMessage live" key={entry.id}>
+                  <div className="messageMeta">Codex · agentMessage</div>
                   <p>{entry.text}</p>
                 </article>
               ))}
-              {!selectedThread && allLiveMessages.length === 0 ? <div className="emptyState">Ready for a new Codex turn.</div> : null}
+              {!selectedThread && allLiveMessages.length === 0 && visiblePendingUserMessages.length === 0 ? (
+                <div className="emptyState">Ready for a new Codex turn.</div>
+              ) : null}
             </div>
             <div className="composer">
               <textarea
@@ -778,35 +828,6 @@ export function App() {
           </section>
         </div>
       </section>
-
-      <aside className="rightRail">
-        <TerminalPane
-          project={selectedProject}
-          sandbox={sandbox}
-          outputs={terminalOutputs}
-          onExec={execCommand}
-          onWrite={writeCommand}
-          onTerminate={terminateCommand}
-        />
-        <ApprovalPanel requests={approvals} onRespond={respondToApproval} />
-        <section className="activityPane">
-          <div className="paneHeader">
-            <div>
-              <h2>Activity</h2>
-              <p>{activity.length} events</p>
-            </div>
-          </div>
-          <div className="activityList">
-            {activity.map((event) => (
-              <article className={`activityItem ${event.tone ?? "normal"}`} key={event.id}>
-                <time>{event.time}</time>
-                <strong>{event.title}</strong>
-                {event.detail ? <p>{event.detail}</p> : null}
-              </article>
-            ))}
-          </div>
-        </section>
-      </aside>
     </main>
   );
 }

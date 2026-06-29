@@ -40,13 +40,26 @@ export interface Turn {
   startedAt: number | null;
   completedAt: number | null;
   items: ThreadItem[];
+  userMessage?: unknown;
+  prompt?: unknown;
+  input?: unknown;
+  message?: unknown;
+  request?: unknown;
+  submission?: unknown;
+  [key: string]: unknown;
 }
 
 export type ThreadItem = {
   type: string;
   id: string;
+  role?: string;
   text?: string;
-  content?: Array<{ type: string; text?: string; path?: string; url?: string }>;
+  message?: unknown;
+  input?: unknown;
+  prompt?: unknown;
+  output?: unknown;
+  value?: unknown;
+  content?: unknown;
   command?: string;
   cwd?: string;
   status?: string;
@@ -57,6 +70,7 @@ export type ThreadItem = {
   tool?: string;
   query?: string;
   summary?: string[];
+  [key: string]: unknown;
 };
 
 export interface ThreadReadResponse {
@@ -80,25 +94,4 @@ export interface SocketMessage {
 export interface CodexNotification {
   method?: string;
   params?: Record<string, unknown>;
-}
-
-export interface CodexServerRequest {
-  id: string | number;
-  method: string;
-  params: Record<string, unknown>;
-  receivedAt: string;
-}
-
-export interface TerminalOutputEvent {
-  processId?: string;
-  stream?: string;
-  text: string;
-}
-
-export interface ActivityEvent {
-  id: string;
-  time: string;
-  title: string;
-  detail?: string;
-  tone?: "normal" | "good" | "warn" | "bad";
 }
