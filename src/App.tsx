@@ -1075,9 +1075,11 @@ export function App() {
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
                   onKeyDown={(event) => {
-                    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                      sendPrompt();
+                    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
+                      return;
                     }
+                    event.preventDefault();
+                    sendPrompt();
                   }}
                   placeholder="Ask Codex to work in this project"
                 />
