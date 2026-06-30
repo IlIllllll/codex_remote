@@ -5,6 +5,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
 import type { CodexBridge } from "./codexBridge.js";
 import { DEFAULT_USER_ID, type ProjectStore } from "./db.js";
+import { LiveStateStore } from "./liveState.js";
 import type { Project, SocketClientMessage, SocketServerMessage } from "./types.js";
 
 const commandSchema = z.array(z.string()).min(1);
@@ -81,8 +82,10 @@ function getProjectOrThrow(store: ProjectStore, projectId: unknown, userId: stri
 
 export function attachSocketServer(httpServer: HttpServer, bridge: CodexBridge, store: ProjectStore): WebSocketServer {
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  const liveState = new LiveStateStore();
 
   bridge.on("notification", (message) => {
+    liveState.recordNotification(message);
     broadcast(wss, { type: "codex.notification", data: message });
 
     const maybe = message as { method?: string; params?: { processId?: string; deltaBase64?: string; stream?: string } };
@@ -115,19 +118,26 @@ export function attachSocketServer(httpServer: HttpServer, bridge: CodexBridge, 
       type: "hello",
       ok: true,
       data: {
-        pendingServerRequests: bridge.getPendingServerRequests()
+        pendingServerRequests: bridge.getPendingServerRequests(),
+        liveState: liveState.snapshot()
       }
     });
 
     ws.on("message", (raw) => {
-      void handleClientMessage(ws, bridge, store, raw.toString("utf8"));
+      void handleClientMessage(ws, bridge, store, liveState, raw.toString("utf8"));
     });
   });
 
   return wss;
 }
 
-async function handleClientMessage(ws: WebSocket, bridge: CodexBridge, store: ProjectStore, raw: string): Promise<void> {
+async function handleClientMessage(
+  ws: WebSocket,
+  bridge: CodexBridge,
+  store: ProjectStore,
+  liveState: LiveStateStore,
+  raw: string
+): Promise<void> {
   let message: SocketClientMessage;
   try {
     message = JSON.parse(raw) as SocketClientMessage;
@@ -140,6 +150,11 @@ async function handleClientMessage(ws: WebSocket, bridge: CodexBridge, store: Pr
 
   try {
     switch (message.type) {
+      case "live.state": {
+        send(ws, { type: "live.state", requestId, ok: true, data: liveState.snapshot() });
+        break;
+      }
+
       case "thread.start": {
         const project = getProjectOrThrow(store, message.projectId, pickUserId(message.userId));
         const prompt = pickString(message.prompt).trim();

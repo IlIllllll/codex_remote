@@ -96,6 +96,29 @@ export interface CodexNotification {
   params?: Record<string, unknown>;
 }
 
+export interface LiveAgentMessage {
+  itemId: string;
+  threadId: string | null;
+  turnId: string | null;
+  text: string;
+  completed: boolean;
+  updatedAt: string;
+}
+
+export interface LiveTurnState {
+  threadId: string | null;
+  turnId: string | null;
+  status: "running" | "completed";
+  startedAt: string;
+  updatedAt: string;
+}
+
+export interface LiveStateSnapshot {
+  agentMessages: LiveAgentMessage[];
+  activeTurns: LiveTurnState[];
+  updatedAt: string | null;
+}
+
 export interface ProjectFile {
   name: string;
   path: string;

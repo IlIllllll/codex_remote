@@ -36,6 +36,7 @@ import { codexSocket } from "./codexSocket";
 import type {
   ApprovalPolicy,
   CodexNotification,
+  LiveStateSnapshot,
   Project,
   ProjectFile,
   ProjectFilePreview,
@@ -331,6 +332,16 @@ function modelProfileIdFor(model: string, effort: ReasoningEffort): string {
   return modelProfiles.find((profile) => profile.model === model && profile.effort === effort)?.id ?? defaultModelProfileId;
 }
 
+function liveDeltasFromSnapshot(snapshot: LiveStateSnapshot): Record<string, string> {
+  return Object.fromEntries(
+    snapshot.agentMessages.filter((message) => message.itemId && message.text).map((message) => [message.itemId, message.text])
+  );
+}
+
+function activeTurnIdFromSnapshot(snapshot: LiveStateSnapshot): string | null {
+  return snapshot.activeTurns.find((turn) => turn.status === "running")?.turnId ?? null;
+}
+
 export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -370,6 +381,16 @@ export function App() {
   );
   const selectedModelProfile = useMemo(() => modelProfileById(modelProfileId), [modelProfileId]);
   const isAdmin = selectedUserId === adminUserId;
+  const selectedProjectIdRef = useRef(selectedProjectId);
+  const selectedThreadRef = useRef<ThreadSummary | null>(selectedThread);
+
+  useEffect(() => {
+    selectedProjectIdRef.current = selectedProjectId;
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    selectedThreadRef.current = selectedThread;
+  }, [selectedThread]);
 
   useEffect(() => {
     void refreshUsers();
@@ -388,7 +409,6 @@ export function App() {
     setSelectedProjectId("");
     setSelectedThread(null);
     setThreads([]);
-    setLiveDeltas({});
     setPendingUserMessages([]);
     setUploadedFiles([]);
     setFilePreview(null);
@@ -402,7 +422,6 @@ export function App() {
     if (!selectedProject) {
       return;
     }
-    setLiveDeltas({});
     setPendingUserMessages([]);
     setUploadedFiles([]);
     setFilePreview(null);
@@ -497,7 +516,7 @@ export function App() {
     void removeUser(user);
   }
 
-  async function refreshThreads(projectId = selectedProjectId) {
+  async function refreshThreads(projectId = selectedProjectIdRef.current) {
     if (!projectId) {
       return;
     }
@@ -509,9 +528,12 @@ export function App() {
     }
   }
 
-  async function openThread(threadId: string) {
+  async function openThread(threadId: string, projectId = selectedProjectIdRef.current) {
+    if (!projectId) {
+      return;
+    }
     try {
-      const response = await readThread(threadId, selectedProjectId);
+      const response = await readThread(threadId, projectId);
       setSelectedThread(response.thread);
       setLiveDeltas({});
       setPendingUserMessages((current) =>
@@ -713,7 +735,26 @@ export function App() {
     }
   }
 
+  function hydrateLiveState(snapshot: LiveStateSnapshot | undefined) {
+    if (!snapshot) {
+      return;
+    }
+    setLiveDeltas(liveDeltasFromSnapshot(snapshot));
+    setActiveTurnId(activeTurnIdFromSnapshot(snapshot));
+  }
+
   function handleSocketMessage(message: SocketMessage) {
+    if (message.type === "hello") {
+      const data = message.data as { liveState?: LiveStateSnapshot } | undefined;
+      hydrateLiveState(data?.liveState);
+      return;
+    }
+
+    if (message.type === "live.state") {
+      hydrateLiveState(message.data as LiveStateSnapshot | undefined);
+      return;
+    }
+
     if (message.type === "ack") {
       if (!message.ok) {
         setError(message.error ?? "Socket request failed.");
@@ -733,7 +774,7 @@ export function App() {
       if (data?.turn?.turn?.id) {
         setActiveTurnId(data.turn.turn.id);
       }
-      window.setTimeout(() => void refreshThreads(), 750);
+      window.setTimeout(() => void refreshThreads(selectedProjectIdRef.current), 750);
       return;
     }
 
@@ -743,22 +784,27 @@ export function App() {
       if (notification.method === "item/agentMessage/delta") {
         const itemId = String(params.itemId ?? "");
         const delta = String(params.delta ?? "");
+        if (!itemId) {
+          return;
+        }
         setLiveDeltas((current) => ({ ...current, [itemId]: `${current[itemId] ?? ""}${delta}` }));
       }
       if (notification.method === "turn/started") {
         const turn = params.turn as { id?: string } | undefined;
         setActiveTurnId(turn?.id ?? null);
         const threadId = String(params.threadId ?? "");
-        if (threadId && (!selectedThread || selectedThread.id !== threadId)) {
-          void openThread(threadId);
+        const currentThread = selectedThreadRef.current;
+        if (threadId && (!currentThread || currentThread.id !== threadId)) {
+          void openThread(threadId, selectedProjectIdRef.current);
         }
       }
       if (notification.method === "turn/completed") {
         setActiveTurnId(null);
-        if (selectedThread?.id) {
-          void openThread(selectedThread.id);
+        const currentThread = selectedThreadRef.current;
+        if (currentThread?.id) {
+          void openThread(currentThread.id, selectedProjectIdRef.current);
         }
-        void refreshThreads();
+        void refreshThreads(selectedProjectIdRef.current);
       }
       return;
     }
