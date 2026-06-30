@@ -294,6 +294,25 @@ function uploadedFileMarkdown(files: ProjectFile[]): string {
   return files.map((file) => `- [${file.name}](${file.relativePath})`).join("\n");
 }
 
+function promptWithUploadedFiles(promptText: string, files: ProjectFile[]): string {
+  if (!files.length) {
+    return promptText;
+  }
+  const uploadContext = `上传文件：\n${uploadedFileMarkdown(files)}`;
+  return promptText ? `${promptText}\n\n${uploadContext}` : uploadContext;
+}
+
+function visiblePromptText(promptText: string, files: ProjectFile[]): string {
+  if (promptText) {
+    return promptText;
+  }
+  if (!files.length) {
+    return "";
+  }
+  const names = files.map((file) => file.name).join("、");
+  return `上传了 ${files.length} 个文件：${names}`;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
     return `${bytes} B`;
@@ -582,11 +601,6 @@ export function App() {
     try {
       const response = await uploadProjectFiles(selectedProject.id, files);
       setUploadedFiles((current) => [...response.data, ...current]);
-      const markdown = uploadedFileMarkdown(response.data);
-      setPrompt((current) => {
-        const prefix = current.trim() ? `${current.trim()}\n\n` : "";
-        return `${prefix}上传文件：\n${markdown}`;
-      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -651,9 +665,11 @@ export function App() {
 
   function sendPrompt() {
     const promptText = prompt.trim();
-    if (!selectedProject || !promptText) {
+    if (!selectedProject || (!promptText && !uploadedFiles.length)) {
       return;
     }
+    const sentPromptText = promptWithUploadedFiles(promptText, uploadedFiles);
+    const visibleText = visiblePromptText(promptText, uploadedFiles);
     const requestId = `thread-${crypto.randomUUID()}`;
     const payload = selectedThread
       ? {
@@ -662,7 +678,7 @@ export function App() {
           userId: selectedUserId,
           projectId: selectedProject.id,
           threadId: selectedThread.id,
-          prompt: promptText,
+          prompt: sentPromptText,
           model: selectedModelProfile.model,
           reasoningEffort: selectedModelProfile.effort,
           sandbox,
@@ -673,7 +689,7 @@ export function App() {
           requestId,
           userId: selectedUserId,
           projectId: selectedProject.id,
-          prompt: promptText,
+          prompt: sentPromptText,
           model: selectedModelProfile.model,
           reasoningEffort: selectedModelProfile.effort,
           sandbox,
@@ -687,10 +703,11 @@ export function App() {
           id: `user-${requestId}`,
           requestId,
           threadId: selectedThread?.id ?? null,
-          text: promptText
+          text: visibleText
         }
       ]);
       setPrompt("");
+      setUploadedFiles([]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -1065,7 +1082,12 @@ export function App() {
                   placeholder="Ask Codex to work in this project"
                 />
               </div>
-              <button className="iconButton primary sendButton" type="button" onClick={sendPrompt} disabled={!selectedProject || !prompt.trim()}>
+              <button
+                className="iconButton primary sendButton"
+                type="button"
+                onClick={sendPrompt}
+                disabled={!selectedProject || (!prompt.trim() && !uploadedFiles.length)}
+              >
                 <Send size={18} />
               </button>
             </div>
