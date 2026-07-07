@@ -19,7 +19,7 @@ afterEach(() => {
 
 describe("listBrowsableDirectories", () => {
   it("lists directories under the configured root", () => {
-    const result = listBrowsableDirectories(undefined, root);
+    const result = listBrowsableDirectories(undefined, root, { allowOutsideRoot: false });
 
     expect(result.rootPath).toBe(fs.realpathSync(root));
     expect(result.currentPath).toBe(fs.realpathSync(root));
@@ -30,7 +30,7 @@ describe("listBrowsableDirectories", () => {
   it("accepts relative paths inside the configured root", () => {
     fs.mkdirSync(path.join(root, "alpha", "child"));
 
-    const result = listBrowsableDirectories("alpha", root);
+    const result = listBrowsableDirectories("alpha", root, { allowOutsideRoot: false });
 
     expect(result.currentPath).toBe(fs.realpathSync(path.join(root, "alpha")));
     expect(result.parentPath).toBe(fs.realpathSync(root));
@@ -38,8 +38,8 @@ describe("listBrowsableDirectories", () => {
   });
 
   it("rejects paths outside the configured root", () => {
-    expect(() => listBrowsableDirectories("..", root)).toThrow(/must stay under/);
-    expect(() => listBrowsableDirectories(path.dirname(root), root)).toThrow(/must stay under/);
+    expect(() => listBrowsableDirectories("..", root, { allowOutsideRoot: false })).toThrow(/must stay under/);
+    expect(() => listBrowsableDirectories(path.dirname(root), root, { allowOutsideRoot: false })).toThrow(/must stay under/);
   });
 
   it("can browse above the configured root when outside roots are enabled", () => {
