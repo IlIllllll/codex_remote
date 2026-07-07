@@ -10,12 +10,20 @@ export class PathPolicyError extends Error {
   }
 }
 
-export function resolveProjectPath(inputPath: string, allowedRoot = serverConfig.projectRoot): string {
+export function resolveProjectPath(
+  inputPath: string,
+  allowedRoot = serverConfig.projectRoot,
+  options: { allowOutsideRoot?: boolean } = {}
+): string {
   if (!inputPath || typeof inputPath !== "string") {
     throw new PathPolicyError("Project path is required.");
   }
 
   const resolved = path.resolve(inputPath);
+  if (options.allowOutsideRoot) {
+    return resolved;
+  }
+
   const root = path.resolve(allowedRoot);
   const relative = path.relative(root, resolved);
 
@@ -26,8 +34,11 @@ export function resolveProjectPath(inputPath: string, allowedRoot = serverConfig
   throw new PathPolicyError(`Project path must stay under ${root}.`);
 }
 
-export function ensureProjectDirectory(inputPath: string, options: { create?: boolean; allowedRoot?: string } = {}): string {
-  const rootPath = resolveProjectPath(inputPath, options.allowedRoot);
+export function ensureProjectDirectory(
+  inputPath: string,
+  options: { create?: boolean; allowedRoot?: string; allowOutsideRoot?: boolean } = {}
+): string {
+  const rootPath = resolveProjectPath(inputPath, options.allowedRoot, { allowOutsideRoot: options.allowOutsideRoot });
 
   if (!fs.existsSync(rootPath)) {
     if (!options.create) {
@@ -94,10 +105,12 @@ function decodeLocalFileInput(inputPath: string): { target: string; line: number
 export function resolveProjectFilePath(
   projectRoot: string,
   inputPath: string,
-  options: { mustExist?: boolean; allowedRoot?: string } = {}
+  options: { mustExist?: boolean; allowedRoot?: string; allowOutsideRoot?: boolean } = {}
 ): ProjectFilePath {
   const mustExist = options.mustExist ?? true;
-  const rootPath = fs.realpathSync(ensureProjectDirectory(projectRoot, { allowedRoot: options.allowedRoot }));
+  const rootPath = fs.realpathSync(
+    ensureProjectDirectory(projectRoot, { allowedRoot: options.allowedRoot, allowOutsideRoot: options.allowOutsideRoot })
+  );
   const { target, line } = decodeLocalFileInput(inputPath);
   if (!target) {
     throw new PathPolicyError("File path is required.");

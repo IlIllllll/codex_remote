@@ -23,6 +23,7 @@ import {
   deleteUser,
   getApiUserId,
   fetchProjectFileBlob,
+  listDirectories,
   listProjects,
   listThreads,
   listUsers,
@@ -36,6 +37,7 @@ import { codexSocket } from "./codexSocket";
 import type {
   ApprovalPolicy,
   CodexNotification,
+  DirectoryListResponse,
   LiveStateSnapshot,
   Project,
   ProjectFile,
@@ -342,6 +344,27 @@ function activeTurnIdFromSnapshot(snapshot: LiveStateSnapshot): string | null {
   return snapshot.activeTurns.find((turn) => turn.status === "running")?.turnId ?? null;
 }
 
+function isRunningStatus(status: unknown): boolean {
+  const token = normalizedToken(status);
+  return token.includes("running") || token.includes("inprogress") || token.includes("active");
+}
+
+function requestToken(): string {
+  const browserCrypto = globalThis.crypto;
+  if (typeof browserCrypto?.randomUUID === "function") {
+    return browserCrypto.randomUUID();
+  }
+  if (typeof browserCrypto?.getRandomValues === "function") {
+    const bytes = browserCrypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"))
+      .join("")
+      .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -351,11 +374,15 @@ export function App() {
   const [pendingCreateUserName, setPendingCreateUserName] = useState<string | null>(null);
   const [pendingDeleteUserId, setPendingDeleteUserId] = useState<string | null>(null);
   const [projectRoot, setProjectRoot] = useState("/Volumes/DevDrive/program");
+  const [systemDirectoryPickerAvailable, setSystemDirectoryPickerAvailable] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [selectedThread, setSelectedThread] = useState<ThreadSummary | null>(null);
   const [prompt, setPrompt] = useState("");
   const [selectingDirectory, setSelectingDirectory] = useState(false);
+  const [directoryBrowserOpen, setDirectoryBrowserOpen] = useState(false);
+  const [directoryBrowser, setDirectoryBrowser] = useState<DirectoryListResponse | null>(null);
+  const [directoryBrowserLoading, setDirectoryBrowserLoading] = useState(false);
   const [pendingDeleteProjectId, setPendingDeleteProjectId] = useState<string | null>(null);
   const [modelProfileId, setModelProfileId] = useState(defaultModelProfileId);
   const [sandbox, setSandbox] = useState<SandboxMode>("danger-full-access");
@@ -413,6 +440,7 @@ export function App() {
     setUploadedFiles([]);
     setFilePreview(null);
     setFilePreviewObjectUrl("");
+    setDirectoryBrowserOpen(false);
     setPendingDeleteProjectId(null);
     setPendingDeleteUserId(null);
     void refreshProjects();
@@ -445,6 +473,7 @@ export function App() {
       const response = await listProjects();
       setProjects(response.data);
       setProjectRoot(response.projectRoot);
+      setSystemDirectoryPickerAvailable(Boolean(response.systemDirectoryPickerAvailable));
       if (!response.data.some((project) => project.id === selectedProjectId)) {
         setSelectedThread(null);
         setThreads([]);
@@ -573,14 +602,44 @@ export function App() {
     }
   }
 
+  async function openDirectoryBrowser(directoryPath?: string) {
+    setDirectoryBrowserLoading(true);
+    setError("");
+    try {
+      const response = await listDirectories(directoryPath);
+      setDirectoryBrowser(response.data);
+      setDirectoryBrowserOpen(true);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setDirectoryBrowserLoading(false);
+    }
+  }
+
+  async function connectCurrentDirectory() {
+    if (!directoryBrowser) {
+      return;
+    }
+    await connectProjectDirectory(directoryBrowser.currentPath);
+    setDirectoryBrowserOpen(false);
+  }
+
   async function chooseDirectory() {
     setSelectingDirectory(true);
     setError("");
     try {
+      if (!systemDirectoryPickerAvailable) {
+        await openDirectoryBrowser(projectRoot);
+        return;
+      }
       const response = await selectDirectory();
       await connectProjectDirectory(response.data.rootPath);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
+      if (message.includes("system-directory-picker-unavailable")) {
+        await openDirectoryBrowser(projectRoot);
+        return;
+      }
       if (!message.includes("canceled")) {
         setError(message);
       }
@@ -692,7 +751,7 @@ export function App() {
     }
     const sentPromptText = promptWithUploadedFiles(promptText, uploadedFiles);
     const visibleText = visiblePromptText(promptText, uploadedFiles);
-    const requestId = `thread-${crypto.randomUUID()}`;
+    const requestId = `thread-${requestToken()}`;
     const payload = selectedThread
       ? {
           type: "turn.start",
@@ -817,6 +876,7 @@ export function App() {
     }
     return entry.threadId === null || entry.threadId === selectedThread.id;
   });
+  const conversationRunState = activeTurnId || isRunningStatus(selectedThread?.status) ? "running" : "idle";
 
   return (
     <main className="appShell">
@@ -963,6 +1023,75 @@ export function App() {
         </div>
       ) : null}
 
+      {directoryBrowserOpen ? (
+        <div className="modalScrim" role="dialog" aria-modal="true" aria-labelledby="directory-browser-title">
+          <div className="directoryDialog">
+            <div className="directoryDialogHeader">
+              <div>
+                <h2 id="directory-browser-title">选择项目目录</h2>
+                <p>{directoryBrowser?.currentPath ?? projectRoot}</p>
+              </div>
+              <button className="iconButton" type="button" onClick={() => setDirectoryBrowserOpen(false)} title="关闭">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="directoryToolbar">
+              <button
+                className="iconTextButton"
+                type="button"
+                onClick={() => void openDirectoryBrowser(directoryBrowser?.parentPath ?? directoryBrowser?.rootPath)}
+                disabled={directoryBrowserLoading || !directoryBrowser?.parentPath}
+              >
+                上级
+              </button>
+              <button
+                className="iconButton"
+                type="button"
+                onClick={() => void openDirectoryBrowser(directoryBrowser?.currentPath)}
+                disabled={directoryBrowserLoading}
+                title="刷新"
+              >
+                <RefreshCcw size={15} />
+              </button>
+            </div>
+            <div className="directoryList">
+              {directoryBrowserLoading ? <div className="directoryEmpty">加载中</div> : null}
+              {!directoryBrowserLoading && directoryBrowser?.directories.length === 0 ? (
+                <div className="directoryEmpty">没有可进入的子目录</div>
+              ) : null}
+              {directoryBrowser?.directories.map((entry) => (
+                <button
+                  className="directoryRow"
+                  type="button"
+                  key={entry.path}
+                  onClick={() => void openDirectoryBrowser(entry.path)}
+                  disabled={directoryBrowserLoading}
+                >
+                  <FolderOpen size={16} />
+                  <span>
+                    <strong>{entry.name}</strong>
+                    <small>{entry.path}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="dialogActions">
+              <button className="iconTextButton" type="button" onClick={() => setDirectoryBrowserOpen(false)}>
+                取消
+              </button>
+              <button
+                className="iconTextButton primary"
+                type="button"
+                onClick={() => void connectCurrentDirectory()}
+                disabled={directoryBrowserLoading || !directoryBrowser}
+              >
+                连接当前目录
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <section className="threadColumn">
         <header className="topbar">
           <div className="projectTitle">
@@ -1011,25 +1140,36 @@ export function App() {
               新建会话
             </button>
             {threads.map((thread) => (
-              <button
-                type="button"
-                key={thread.id}
-                className={`threadRow ${selectedThread?.id === thread.id ? "selected" : ""}`}
-                onClick={() => void openThread(thread.id)}
-              >
-                <Archive size={14} />
-                <span>
-                  <strong>{thread.name || thread.preview || "Untitled"}</strong>
-                  <small>{formatTime(thread.updatedAt)}</small>
-                </span>
-              </button>
+              (() => {
+                const threadRunning = isRunningStatus(thread.status) || Boolean(activeTurnId && selectedThread?.id === thread.id);
+                return (
+                  <button
+                    type="button"
+                    key={thread.id}
+                    className={`threadRow ${selectedThread?.id === thread.id ? "selected" : ""} ${threadRunning ? "running" : ""}`}
+                    onClick={() => void openThread(thread.id)}
+                  >
+                    <Archive size={14} />
+                    <span>
+                      <strong>{thread.name || thread.preview || "Untitled"}</strong>
+                      <small>{formatTime(thread.updatedAt)}</small>
+                    </span>
+                    {threadRunning ? <span className="threadRunningBadge">running</span> : null}
+                  </button>
+                );
+              })()
             ))}
           </nav>
 
           <section className="conversation">
             <div className="conversationHeader">
-              <h2>{selectedThread?.name || selectedThread?.preview || "New Thread"}</h2>
-              <span>{activeTurnId ? "running" : statusText(selectedThread?.status)}</span>
+              <div className="conversationTitle">
+                <h2>{selectedThread?.name || selectedThread?.preview || "New Thread"}</h2>
+                <div className={`threadRunState ${conversationRunState}`}>
+                  <span>{conversationRunState}</span>
+                  <span className="runLamp" />
+                </div>
+              </div>
             </div>
             <div className="messages">
               {(selectedThread?.turns ?? []).flatMap((turn) => {

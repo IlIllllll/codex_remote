@@ -1,5 +1,6 @@
 import type {
   ApprovalPolicy,
+  DirectoryListResponse,
   Project,
   ProjectFile,
   ProjectFilePreview,
@@ -59,7 +60,12 @@ export function deleteUser(id: string): Promise<{ ok: boolean }> {
   return request(`/api/users/${id}`, { method: "DELETE" });
 }
 
-export function listProjects(): Promise<{ data: Project[]; projectRoot: string }> {
+export function listProjects(): Promise<{
+  data: Project[];
+  projectRoot: string;
+  allowOutsideProjectRoot?: boolean;
+  systemDirectoryPickerAvailable?: boolean;
+}> {
   return request("/api/projects");
 }
 
@@ -84,6 +90,11 @@ export function selectDirectory(): Promise<{ data: { rootPath: string } }> {
     method: "POST",
     body: JSON.stringify({})
   });
+}
+
+export function listDirectories(directoryPath?: string): Promise<{ data: DirectoryListResponse }> {
+  const suffix = directoryPath ? `?path=${encodeURIComponent(directoryPath)}` : "";
+  return request(`/api/system/directories${suffix}`);
 }
 
 export function updateProject(id: string, input: Partial<Project>): Promise<{ data: Project }> {

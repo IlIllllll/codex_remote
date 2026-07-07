@@ -281,6 +281,100 @@ label input {
   line-height: 1.45;
 }
 
+.directoryDialog {
+  display: grid;
+  gap: 12px;
+  width: min(620px, 100%);
+  max-height: min(720px, calc(100vh - 40px));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--panel-strong);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.18);
+}
+
+.directoryDialogHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+}
+
+.directoryDialog h2 {
+  margin: 0 0 5px;
+  font-size: 16px;
+}
+
+.directoryDialogHeader p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directoryToolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.directoryList {
+  display: grid;
+  gap: 6px;
+  min-height: 180px;
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #f8f7f2;
+}
+
+.directoryRow {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.directoryRow:hover {
+  border-color: var(--line);
+  background: var(--panel-strong);
+}
+
+.directoryRow span {
+  min-width: 0;
+}
+
+.directoryRow strong,
+.directoryRow small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directoryRow small,
+.directoryEmpty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.directoryEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 64px;
+}
+
 .dialogActions {
   display: flex;
   justify-content: flex-end;
@@ -313,7 +407,7 @@ label input {
 .threadRow,
 .newThreadButton {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -336,6 +430,10 @@ label input {
   border-color: var(--line);
 }
 
+.threadRow.running {
+  border-color: rgba(181, 68, 68, 0.24);
+}
+
 .threadRow span {
   min-width: 0;
 }
@@ -355,6 +453,17 @@ label input {
   white-space: nowrap;
   color: var(--muted);
   font-size: 11px;
+}
+
+.threadRunningBadge {
+  align-self: start;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: var(--red);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
 }
 
 .projectRow {
@@ -543,12 +652,14 @@ label input {
 }
 
 .conversationHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
+}
+
+.conversationTitle {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
 }
 
 .conversationHeader h2 {
@@ -556,10 +667,36 @@ label input {
   font-size: 15px;
 }
 
-.conversationHeader span {
-  margin: 0;
+.threadRunState {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
   color: var(--muted);
   font-size: 12px;
+  line-height: 1;
+}
+
+.runLamp {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(32, 127, 120, 0.12);
+}
+
+.threadRunState.idle .runLamp {
+  background: #2f9d65;
+}
+
+.threadRunState.running {
+  color: var(--red);
+  font-weight: 650;
+}
+
+.threadRunState.running .runLamp {
+  background: var(--red);
+  box-shadow: 0 0 0 3px rgba(181, 68, 68, 0.14);
 }
 
 .messages {

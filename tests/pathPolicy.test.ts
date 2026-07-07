@@ -15,6 +15,13 @@ describe("path policy", () => {
     expect(() => resolveProjectPath(path.dirname(root), root)).toThrow(/must stay under/);
   });
 
+  it("allows project roots outside the configured root when explicitly enabled", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-root-"));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-outside-"));
+    expect(resolveProjectPath(outside, root, { allowOutsideRoot: true })).toBe(outside);
+    expect(ensureProjectDirectory(outside, { allowedRoot: root, allowOutsideRoot: true })).toBe(outside);
+  });
+
   it("creates missing project directories when requested", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-root-"));
     const target = path.join(root, "new-project");
@@ -39,5 +46,16 @@ describe("path policy", () => {
     const outside = path.join(os.tmpdir(), `codex-web-outside-${Date.now()}.txt`);
     fs.writeFileSync(outside, "outside");
     expect(() => resolveProjectFilePath(root, outside, { allowedRoot: root })).toThrow(/inside the selected project/);
+  });
+
+  it("keeps file access inside the selected project when project roots may be outside the configured root", () => {
+    const configuredRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-config-root-"));
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-project-root-"));
+    const outside = path.join(os.tmpdir(), `codex-web-outside-file-${Date.now()}.txt`);
+    fs.writeFileSync(outside, "outside");
+
+    expect(() =>
+      resolveProjectFilePath(projectRoot, outside, { allowedRoot: configuredRoot, allowOutsideRoot: true })
+    ).toThrow(/inside the selected project/);
   });
 });

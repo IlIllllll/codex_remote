@@ -22,6 +22,19 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+  relativePath: string;
+}
+
+export interface DirectoryListResponse {
+  rootPath: string;
+  currentPath: string;
+  parentPath: string | null;
+  directories: DirectoryEntry[];
+}
+
 export interface ThreadSummary {
   id: string;
   sessionId: string;

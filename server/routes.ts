@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { CodexBridge } from "./codexBridge.js";
 import { defaults, serverConfig } from "./config.js";
 import { ADMIN_USER_ID, DEFAULT_USER_ID, type ProjectStore } from "./db.js";
+import { listBrowsableDirectories } from "./directoryBrowser.js";
 import { ensureProjectDirectory, PathPolicyError, resolveProjectFilePath, resolveProjectPath } from "./pathPolicy.js";
 import { readThreadFromJsonl, threadJsonlPathFromError } from "./threadFallback.js";
 import { listAllCodexThreads, THREAD_LIST_PAGE_SIZE } from "./threadList.js";
@@ -135,7 +136,10 @@ function uniqueUploadTarget(projectRoot: string, filename: string): { filePath: 
   const parsed = path.parse(safeName);
   for (let index = 0; index < 10_000; index += 1) {
     const name = index === 0 ? safeName : `${parsed.name}-${index + 1}${parsed.ext}`;
-    const target = resolveProjectFilePath(projectRoot, path.join(uploadDirectory, name), { mustExist: false });
+    const target = resolveProjectFilePath(projectRoot, path.join(uploadDirectory, name), {
+      mustExist: false,
+      allowOutsideRoot: serverConfig.allowOutsideProjectRoot
+    });
     if (!fs.existsSync(target.filePath)) {
       return target;
     }
@@ -177,11 +181,30 @@ function userIdFromRequest(request: { headers: Record<string, unknown> }): strin
   return typeof value === "string" && value.trim() ? value.trim() : DEFAULT_USER_ID;
 }
 
+function requestHostname(request: { headers: Record<string, unknown>; hostname?: string }): string {
+  const host = typeof request.headers.host === "string" ? request.headers.host : request.hostname ?? "";
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    return (end === -1 ? host.slice(1) : host.slice(1, end)).toLowerCase();
+  }
+  return host.split(":")[0].toLowerCase();
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "::1" || hostname === "0:0:0:0:0:0:0:1" || hostname === "127.0.0.1" || hostname.startsWith("127.");
+}
+
+function systemDirectoryPickerAvailableForRequest(request: { headers: Record<string, unknown>; hostname?: string }): boolean {
+  return process.platform === "darwin" && isLoopbackHostname(requestHostname(request));
+}
+
 export function registerRoutes(app: FastifyInstance, bridge: CodexBridge, store: ProjectStore): void {
-  app.get("/api/health", async () => ({
+  app.get("/api/health", async (request) => ({
     ok: true,
     codexPendingApprovals: bridge.getPendingServerRequests().length,
     projectRoot: serverConfig.projectRoot,
+    allowOutsideProjectRoot: serverConfig.allowOutsideProjectRoot,
+    systemDirectoryPickerAvailable: systemDirectoryPickerAvailableForRequest(request),
     defaults
   }));
 
@@ -218,12 +241,29 @@ export function registerRoutes(app: FastifyInstance, bridge: CodexBridge, store:
 
   app.get("/api/projects", async (request) => ({
     data: store.listProjects(userIdFromRequest(request)),
-    projectRoot: serverConfig.projectRoot
+    projectRoot: serverConfig.projectRoot,
+    allowOutsideProjectRoot: serverConfig.allowOutsideProjectRoot,
+    systemDirectoryPickerAvailable: systemDirectoryPickerAvailableForRequest(request)
   }));
 
-  app.post("/api/system/select-directory", async (_request, reply) => {
-    if (process.platform !== "darwin") {
-      return reply.code(501).send({ error: "System directory picker is currently implemented for macOS only." });
+  app.get<{ Querystring: { path?: string } }>("/api/system/directories", async (request, reply) => {
+    try {
+      return {
+        data: listBrowsableDirectories(request.query.path, serverConfig.projectRoot, {
+          allowOutsideRoot: serverConfig.allowOutsideProjectRoot
+        })
+      };
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/api/system/select-directory", async (request, reply) => {
+    if (!systemDirectoryPickerAvailableForRequest(request)) {
+      return reply.code(501).send({
+        error: "system-directory-picker-unavailable",
+        message: "System directory picker is only available when this service is opened locally on the host machine."
+      });
     }
 
     try {
@@ -234,7 +274,9 @@ export function registerRoutes(app: FastifyInstance, bridge: CodexBridge, store:
       ].join("\n");
       const { stdout } = await execFileAsync("osascript", ["-e", script], { timeout: 120_000 });
       const selectedPath = stdout.trim().replace(/\/+$/, "");
-      const rootPath = resolveProjectPath(selectedPath || serverConfig.projectRoot);
+      const rootPath = resolveProjectPath(selectedPath || serverConfig.projectRoot, serverConfig.projectRoot, {
+        allowOutsideRoot: serverConfig.allowOutsideProjectRoot
+      });
       return { data: { rootPath } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -252,7 +294,10 @@ export function registerRoutes(app: FastifyInstance, bridge: CodexBridge, store:
       if (!store.getUser(userId)) {
         return reply.code(404).send({ error: "User not found." });
       }
-      const rootPath = ensureProjectDirectory(input.rootPath, { create: input.createDirectory });
+      const rootPath = ensureProjectDirectory(input.rootPath, {
+        create: input.createDirectory,
+        allowOutsideRoot: serverConfig.allowOutsideProjectRoot
+      });
       const existingProject = store.getProjectByRootPath(rootPath, userId);
       if (existingProject) {
         return { data: existingProject };
@@ -300,7 +345,9 @@ export function registerRoutes(app: FastifyInstance, bridge: CodexBridge, store:
     }
 
     try {
-      const target = resolveProjectFilePath(project.rootPath, request.query.path);
+      const target = resolveProjectFilePath(project.rootPath, request.query.path, {
+        allowOutsideRoot: serverConfig.allowOutsideProjectRoot
+      });
       const stat = fs.statSync(target.filePath);
       if (!stat.isFile()) {
         return reply.code(400).send({ error: "Path is not a file." });
@@ -339,7 +386,9 @@ export function registerRoutes(app: FastifyInstance, bridge: CodexBridge, store:
     }
 
     try {
-      const target = resolveProjectFilePath(project.rootPath, request.query.path);
+      const target = resolveProjectFilePath(project.rootPath, request.query.path, {
+        allowOutsideRoot: serverConfig.allowOutsideProjectRoot
+      });
       const stat = fs.statSync(target.filePath);
       if (!stat.isFile()) {
         return reply.code(400).send({ error: "Path is not a file." });
