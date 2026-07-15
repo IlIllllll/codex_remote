@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { CodexBridge } from "./codexBridge.js";
 import { DEFAULT_USER_ID, type ProjectStore } from "./db.js";
 import { LiveStateStore } from "./liveState.js";
+import { notificationThreadId, scopeMatchesThread, type SocketClientScope } from "./socketScope.js";
 import type { Project, SocketClientMessage, SocketServerMessage } from "./types.js";
 
 const commandSchema = z.array(z.string()).min(1);
@@ -20,6 +21,25 @@ function broadcast(wss: WebSocketServer, message: SocketServerMessage): void {
   const payload = JSON.stringify(message);
   for (const client of wss.clients) {
     if (client.readyState === client.OPEN) {
+      client.send(payload);
+    }
+  }
+}
+
+function broadcastThreadNotification(
+  wss: WebSocketServer,
+  clientScopes: WeakMap<WebSocket, SocketClientScope>,
+  threadId: string | null,
+  message: SocketServerMessage
+): void {
+  if (!threadId) {
+    broadcast(wss, message);
+    return;
+  }
+
+  const payload = JSON.stringify(message);
+  for (const client of wss.clients) {
+    if (client.readyState === client.OPEN && scopeMatchesThread(clientScopes.get(client), threadId)) {
       client.send(payload);
     }
   }
@@ -83,10 +103,14 @@ function getProjectOrThrow(store: ProjectStore, projectId: unknown, userId: stri
 export function attachSocketServer(httpServer: HttpServer, bridge: CodexBridge, store: ProjectStore): WebSocketServer {
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
   const liveState = new LiveStateStore();
+  const clientScopes = new WeakMap<WebSocket, SocketClientScope>();
 
   bridge.on("notification", (message) => {
     liveState.recordNotification(message);
-    broadcast(wss, { type: "codex.notification", data: message });
+    broadcastThreadNotification(wss, clientScopes, notificationThreadId(message), {
+      type: "codex.notification",
+      data: message
+    });
 
     const maybe = message as { method?: string; params?: { processId?: string; deltaBase64?: string; stream?: string } };
     if (maybe.method === "command/exec/outputDelta" && maybe.params?.deltaBase64) {
@@ -119,12 +143,12 @@ export function attachSocketServer(httpServer: HttpServer, bridge: CodexBridge, 
       ok: true,
       data: {
         pendingServerRequests: bridge.getPendingServerRequests(),
-        liveState: liveState.snapshot()
+        liveState: liveState.snapshot(null)
       }
     });
 
     ws.on("message", (raw) => {
-      void handleClientMessage(ws, bridge, store, liveState, raw.toString("utf8"));
+      void handleClientMessage(ws, bridge, store, liveState, clientScopes, raw.toString("utf8"));
     });
   });
 
@@ -136,6 +160,7 @@ async function handleClientMessage(
   bridge: CodexBridge,
   store: ProjectStore,
   liveState: LiveStateStore,
+  clientScopes: WeakMap<WebSocket, SocketClientScope>,
   raw: string
 ): Promise<void> {
   let message: SocketClientMessage;
@@ -150,13 +175,24 @@ async function handleClientMessage(
 
   try {
     switch (message.type) {
+      case "scope.set": {
+        const userId = pickUserId(message.userId);
+        const project = getProjectOrThrow(store, message.projectId, userId);
+        const threadId = pickString(message.threadId).trim() || null;
+        clientScopes.set(ws, { userId, projectId: project.id, threadId });
+        send(ws, { type: "live.state", requestId, ok: true, data: liveState.snapshot(threadId) });
+        break;
+      }
+
       case "live.state": {
-        send(ws, { type: "live.state", requestId, ok: true, data: liveState.snapshot() });
+        const scope = clientScopes.get(ws);
+        send(ws, { type: "live.state", requestId, ok: true, data: liveState.snapshot(scope?.threadId ?? null) });
         break;
       }
 
       case "thread.start": {
-        const project = getProjectOrThrow(store, message.projectId, pickUserId(message.userId));
+        const userId = pickUserId(message.userId);
+        const project = getProjectOrThrow(store, message.projectId, userId);
         const prompt = pickString(message.prompt).trim();
         if (!prompt) {
           throw new Error("Prompt is required.");
@@ -172,6 +208,7 @@ async function handleClientMessage(
         if (!threadId) {
           throw new Error("Codex did not return a thread id.");
         }
+        clientScopes.set(ws, { userId, projectId: project.id, threadId });
         const turn = await bridge.request("turn/start", {
           threadId,
           input: textInput(prompt),
@@ -186,12 +223,14 @@ async function handleClientMessage(
       }
 
       case "turn.start": {
-        const project = getProjectOrThrow(store, message.projectId, pickUserId(message.userId));
+        const userId = pickUserId(message.userId);
+        const project = getProjectOrThrow(store, message.projectId, userId);
         const threadId = pickString(message.threadId);
         const prompt = pickString(message.prompt).trim();
         if (!threadId || !prompt) {
           throw new Error("threadId and prompt are required.");
         }
+        clientScopes.set(ws, { userId, projectId: project.id, threadId });
         await bridge.request("thread/resume", {
           threadId,
           cwd: project.rootPath,

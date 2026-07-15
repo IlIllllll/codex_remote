@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Bot,
+  ChevronDown,
+  ChevronUp,
   FileText,
   FolderOpen,
   GitBranch,
@@ -34,6 +36,9 @@ import {
   uploadProjectFiles
 } from "./api";
 import { codexSocket } from "./codexSocket";
+import { fileTargetFromHref } from "./fileLinks";
+import { notificationMatchesThread, notificationThreadId } from "./threadNotifications";
+import { userMessageNeedsCollapse, userMessagePreview } from "./userMessages";
 import type {
   ApprovalPolicy,
   CodexNotification,
@@ -223,48 +228,6 @@ const defaultModelProfileId = "gpt-5.6-sol:xhigh";
 const adminUserId = "admin";
 const markdownRemarkPlugins = [remarkGfm, remarkBreaks];
 
-function safeDecodeURIComponent(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-function fileTargetFromHref(href?: string): string | null {
-  if (!href || href.startsWith("#")) {
-    return null;
-  }
-
-  if (/^file:\/\//i.test(href)) {
-    return href;
-  }
-
-  if (/^https?:\/\//i.test(href)) {
-    if (typeof window === "undefined") {
-      return null;
-    }
-    const parsed = new URL(href, window.location.href);
-    if (parsed.origin !== window.location.origin || parsed.pathname.startsWith("/api/")) {
-      return null;
-    }
-    return `${safeDecodeURIComponent(parsed.pathname)}${parsed.hash}`;
-  }
-
-  if (href.startsWith("/")) {
-    if (href.startsWith("/api/")) {
-      return null;
-    }
-    return safeDecodeURIComponent(href);
-  }
-
-  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
-    return null;
-  }
-
-  return href;
-}
-
 function MarkdownMessage({ text, onOpenFileLink }: { text: string; onOpenFileLink?: (target: string) => void }) {
   const markdownComponents = useMemo<Components>(
     () => ({
@@ -298,6 +261,53 @@ function MarkdownMessage({ text, onOpenFileLink }: { text: string; onOpenFileLin
         {text || " "}
       </ReactMarkdown>
     </div>
+  );
+}
+
+function ThreadMessageArticle({
+  item,
+  className,
+  label,
+  onOpenFileLink
+}: {
+  item: ThreadItem;
+  className: string;
+  label: string;
+  onOpenFileLink?: (target: string) => void;
+}) {
+  const text = itemText(item);
+  const collapsible = itemKind(item) === "user" && userMessageNeedsCollapse(text);
+  const [expanded, setExpanded] = useState(false);
+  const collapsed = collapsible && !expanded;
+
+  return (
+    <article className={`${className}${collapsed ? " collapsed" : ""}`}>
+      <div className="messageItemHeader">
+        <div className="messageMeta">{label}</div>
+        {collapsible ? (
+          <button
+            className="userMessageToggle"
+            type="button"
+            aria-expanded={expanded}
+            aria-label={expanded ? "收起用户消息" : "展开用户消息"}
+            title={expanded ? "收起用户消息" : "展开用户消息"}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          </button>
+        ) : null}
+      </div>
+      {collapsed ? (
+        <div className="userMessagePreview" title={userMessagePreview(text)}>
+          {userMessagePreview(text)}
+        </div>
+      ) : item.command ? (
+        <pre>{safeText(item.command)}</pre>
+      ) : (
+        <MarkdownMessage text={text} onOpenFileLink={onOpenFileLink} />
+      )}
+      {!collapsed && item.aggregatedOutput ? <pre className="outputBlock">{safeText(item.aggregatedOutput)}</pre> : null}
+    </article>
   );
 }
 
@@ -416,8 +426,16 @@ export function App() {
   );
   const selectedModelProfile = useMemo(() => modelProfileById(modelProfileId), [modelProfileId]);
   const isAdmin = selectedUserId === adminUserId;
+  const selectedUserIdRef = useRef(selectedUserId);
   const selectedProjectIdRef = useRef(selectedProjectId);
   const selectedThreadRef = useRef<ThreadSummary | null>(selectedThread);
+  const liveThreadIdRef = useRef<string | null>(null);
+  const pendingThreadStartRef = useRef(false);
+  const threadLoadRequestRef = useRef(0);
+
+  useEffect(() => {
+    selectedUserIdRef.current = selectedUserId;
+  }, [selectedUserId]);
 
   useEffect(() => {
     selectedProjectIdRef.current = selectedProjectId;
@@ -441,9 +459,16 @@ export function App() {
 
   useEffect(() => {
     setApiUserId(selectedUserId);
+    codexSocket.clearScope();
+    liveThreadIdRef.current = null;
+    pendingThreadStartRef.current = false;
+    threadLoadRequestRef.current += 1;
     setSelectedProjectId("");
     setSelectedThread(null);
+    selectedThreadRef.current = null;
     setThreads([]);
+    setLiveDeltas({});
+    setActiveTurnId(null);
     setPendingUserMessages([]);
     setUploadedFiles([]);
     setFilePreview(null);
@@ -458,6 +483,11 @@ export function App() {
     if (!selectedProject) {
       return;
     }
+    selectedThreadRef.current = null;
+    setSelectedThread(null);
+    pendingThreadStartRef.current = false;
+    threadLoadRequestRef.current += 1;
+    scopeConversation(null, selectedProject.id);
     setPendingUserMessages([]);
     setUploadedFiles([]);
     setFilePreview(null);
@@ -567,14 +597,42 @@ export function App() {
     }
   }
 
+  function scopeConversation(threadId: string | null, projectId = selectedProjectIdRef.current, clearLive = true) {
+    liveThreadIdRef.current = threadId;
+    if (clearLive) {
+      setLiveDeltas({});
+      setActiveTurnId(null);
+    }
+    if (!projectId) {
+      codexSocket.clearScope();
+      return;
+    }
+    codexSocket.setScope({ userId: selectedUserIdRef.current, projectId, threadId });
+  }
+
+  function showNewThread(projectId = selectedProjectIdRef.current) {
+    threadLoadRequestRef.current += 1;
+    pendingThreadStartRef.current = false;
+    selectedThreadRef.current = null;
+    setSelectedThread(null);
+    setPendingUserMessages([]);
+    scopeConversation(null, projectId);
+  }
+
   async function openThread(threadId: string, projectId = selectedProjectIdRef.current) {
     if (!projectId) {
       return;
     }
+    const requestNumber = ++threadLoadRequestRef.current;
     try {
       const response = await readThread(threadId, projectId);
+      if (requestNumber !== threadLoadRequestRef.current || projectId !== selectedProjectIdRef.current) {
+        return;
+      }
+      selectedThreadRef.current = response.thread;
       setSelectedThread(response.thread);
-      setLiveDeltas({});
+      pendingThreadStartRef.current = false;
+      scopeConversation(response.thread.id, projectId);
       setPendingUserMessages((current) =>
         current.filter((entry) => entry.threadId && entry.threadId !== response.thread.id ? true : !threadHasUserText(response.thread, entry.text))
       );
@@ -587,7 +645,7 @@ export function App() {
     const existingProject = projects.find((project) => project.rootPath === rootPath);
     if (existingProject) {
       setPendingDeleteProjectId(null);
-      setSelectedThread(null);
+      showNewThread(existingProject.id);
       setThreads([]);
       setSelectedProjectId(existingProject.id);
       return;
@@ -605,7 +663,7 @@ export function App() {
       setProjects((current) => [response.data, ...current.filter((project) => project.id !== response.data.id)]);
       setPendingDeleteProjectId(null);
       setSelectedProjectId(response.data.id);
-      setSelectedThread(null);
+      showNewThread(response.data.id);
       setThreads([]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -664,7 +722,7 @@ export function App() {
       await deleteProject(project.id);
       if (selectedProjectId === project.id) {
         setSelectedProjectId("");
-        setSelectedThread(null);
+        showNewThread("");
         setThreads([]);
       }
       setPendingDeleteProjectId(null);
@@ -787,6 +845,7 @@ export function App() {
           approvalPolicy
     };
     try {
+      pendingThreadStartRef.current = !selectedThread;
       codexSocket.send(payload);
       setPendingUserMessages((current) => [
         ...current,
@@ -800,12 +859,13 @@ export function App() {
       setPrompt("");
       setUploadedFiles([]);
     } catch (caught) {
+      pendingThreadStartRef.current = false;
       setError(caught instanceof Error ? caught.message : String(caught));
     }
   }
 
   function hydrateLiveState(snapshot: LiveStateSnapshot | undefined) {
-    if (!snapshot) {
+    if (!snapshot || (snapshot.threadId ?? null) !== liveThreadIdRef.current) {
       return;
     }
     setLiveDeltas(liveDeltasFromSnapshot(snapshot));
@@ -826,14 +886,18 @@ export function App() {
 
     if (message.type === "ack") {
       if (!message.ok) {
+        pendingThreadStartRef.current = false;
         setError(message.error ?? "Socket request failed.");
         return;
       }
       const data = message.data as { thread?: { thread?: ThreadSummary }; turn?: { turn?: { id?: string } } } | undefined;
       const newThread = data?.thread?.thread;
       if (newThread?.id) {
-        setSelectedThread(newThread);
-        setSelectedThread((current) => (current ? { ...current, turns: current.turns ?? [] } : current));
+        const normalizedThread = { ...newThread, turns: newThread.turns ?? [] };
+        pendingThreadStartRef.current = false;
+        selectedThreadRef.current = normalizedThread;
+        setSelectedThread(normalizedThread);
+        scopeConversation(newThread.id, selectedProjectIdRef.current, false);
         if (message.requestId) {
           setPendingUserMessages((current) =>
             current.map((entry) => (entry.requestId === message.requestId ? { ...entry, threadId: newThread.id } : entry))
@@ -850,7 +914,14 @@ export function App() {
     if (message.type === "codex.notification") {
       const notification = message.data as CodexNotification;
       const params = notification.params ?? {};
+      const incomingThreadId = notificationThreadId(params);
+      if (incomingThreadId && !liveThreadIdRef.current && pendingThreadStartRef.current) {
+        scopeConversation(incomingThreadId, selectedProjectIdRef.current, false);
+      }
       if (notification.method === "item/agentMessage/delta") {
+        if (!notificationMatchesThread(params, liveThreadIdRef.current)) {
+          return;
+        }
         const itemId = String(params.itemId ?? "");
         const delta = String(params.delta ?? "");
         if (!itemId) {
@@ -859,19 +930,22 @@ export function App() {
         setLiveDeltas((current) => ({ ...current, [itemId]: `${current[itemId] ?? ""}${delta}` }));
       }
       if (notification.method === "turn/started") {
+        if (!notificationMatchesThread(params, liveThreadIdRef.current)) {
+          return;
+        }
         const turn = params.turn as { id?: string } | undefined;
         setActiveTurnId(turn?.id ?? null);
-        const threadId = String(params.threadId ?? "");
-        const currentThread = selectedThreadRef.current;
-        if (threadId && (!currentThread || currentThread.id !== threadId)) {
-          void openThread(threadId, selectedProjectIdRef.current);
-        }
       }
       if (notification.method === "turn/completed") {
+        if (!incomingThreadId || !notificationMatchesThread(params, liveThreadIdRef.current)) {
+          return;
+        }
+        pendingThreadStartRef.current = false;
         setActiveTurnId(null);
+        setLiveDeltas({});
         const currentThread = selectedThreadRef.current;
-        if (currentThread?.id) {
-          void openThread(currentThread.id, selectedProjectIdRef.current);
+        if (!currentThread || currentThread.id === incomingThreadId) {
+          void openThread(incomingThreadId, selectedProjectIdRef.current);
         }
         void refreshThreads(selectedProjectIdRef.current);
       }
@@ -1145,7 +1219,7 @@ export function App() {
                 <RefreshCcw size={15} />
               </button>
             </div>
-            <button type="button" className="newThreadButton" onClick={() => setSelectedThread(null)}>
+            <button type="button" className="newThreadButton" onClick={() => showNewThread()}>
               <MessageSquare size={15} />
               新建会话
             </button>
@@ -1194,15 +1268,13 @@ export function App() {
                   : null;
                 const items = syntheticUserItem ? [syntheticUserItem, ...(turn.items ?? [])] : turn.items ?? [];
                 return items.map((item) => (
-                  <article className={messageClassName(item)} key={`${turn.id}-${item.id}`}>
-                    <div className="messageMeta">{itemLabel(item)}</div>
-                    {item.command ? (
-                      <pre>{safeText(item.command)}</pre>
-                    ) : (
-                      <MarkdownMessage text={itemText(item)} onOpenFileLink={(target) => void openFilePreview(target)} />
-                    )}
-                    {item.aggregatedOutput ? <pre className="outputBlock">{safeText(item.aggregatedOutput)}</pre> : null}
-                  </article>
+                  <ThreadMessageArticle
+                    className={messageClassName(item)}
+                    item={item}
+                    key={`${turn.id}-${item.id}`}
+                    label={itemLabel(item)}
+                    onOpenFileLink={(target) => void openFilePreview(target)}
+                  />
                 ));
               })}
               {visiblePendingUserMessages.map((entry) => {
@@ -1213,10 +1285,13 @@ export function App() {
                   text: entry.text
                 };
                 return (
-                  <article className={messageClassName(item, "live pending")} key={entry.id}>
-                    <div className="messageMeta">用户 · sending</div>
-                    <MarkdownMessage text={entry.text} onOpenFileLink={(target) => void openFilePreview(target)} />
-                  </article>
+                  <ThreadMessageArticle
+                    className={messageClassName(item, "live pending")}
+                    item={item}
+                    key={entry.id}
+                    label="用户 · sending"
+                    onOpenFileLink={(target) => void openFilePreview(target)}
+                  />
                 );
               })}
               {allLiveMessages.map((entry) => (

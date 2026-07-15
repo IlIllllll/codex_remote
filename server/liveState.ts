@@ -20,6 +20,7 @@ export interface LiveTurnState {
 }
 
 export interface LiveStateSnapshot {
+  threadId: string | null;
   agentMessages: LiveAgentMessage[];
   activeTurns: LiveTurnState[];
   updatedAt: string | null;
@@ -72,10 +73,17 @@ export class LiveStateStore {
     }
   }
 
-  snapshot(): LiveStateSnapshot {
+  snapshot(threadId?: string | null): LiveStateSnapshot {
+    const messages = Array.from(this.agentMessages.values());
+    const turns = Array.from(this.activeTurns.values());
     return {
-      agentMessages: Array.from(this.agentMessages.values()).map((message) => ({ ...message })),
-      activeTurns: Array.from(this.activeTurns.values()).map((turn) => ({ ...turn })),
+      threadId: threadId ?? null,
+      agentMessages: messages
+        .filter((message) => threadId === undefined || (threadId !== null && message.threadId === threadId))
+        .map((message) => ({ ...message })),
+      activeTurns: turns
+        .filter((turn) => threadId === undefined || (threadId !== null && turn.threadId === threadId))
+        .map((turn) => ({ ...turn })),
       updatedAt: this.updatedAt
     };
   }
@@ -139,7 +147,7 @@ export class LiveStateStore {
 
     for (const [itemId, message] of this.agentMessages.entries()) {
       if (matchesTurn(message, threadId, turnId)) {
-        this.agentMessages.set(itemId, { ...message, completed: true, updatedAt: now });
+        this.agentMessages.delete(itemId);
       }
     }
     this.updatedAt = now;

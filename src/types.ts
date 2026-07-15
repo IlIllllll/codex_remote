@@ -127,6 +127,7 @@ export interface LiveTurnState {
 }
 
 export interface LiveStateSnapshot {
+  threadId: string | null;
   agentMessages: LiveAgentMessage[];
   activeTurns: LiveTurnState[];
   updatedAt: string | null;

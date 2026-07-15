@@ -25,7 +25,7 @@ describe("LiveStateStore", () => {
     ]);
   });
 
-  it("removes active turns and marks matching deltas complete", () => {
+  it("removes active turns and matching deltas after completion", () => {
     const store = new LiveStateStore();
 
     store.recordNotification({ method: "turn/started", params: { threadId: "thread-1", turn: { id: "turn-1" } } });
@@ -40,7 +40,26 @@ describe("LiveStateStore", () => {
 
     const snapshot = store.snapshot();
     expect(snapshot.activeTurns).toEqual([]);
-    expect(snapshot.agentMessages[0]).toMatchObject({ itemId: "item-1", completed: true, text: "streaming" });
+    expect(snapshot.agentMessages).toEqual([]);
+  });
+
+  it("returns live state only for the requested thread", () => {
+    const store = new LiveStateStore();
+
+    store.recordNotification({ method: "turn/started", params: { threadId: "thread-1", turn: { id: "turn-1" } } });
+    store.recordNotification({ method: "turn/started", params: { threadId: "thread-2", turn: { id: "turn-2" } } });
+    store.recordNotification({
+      method: "item/agentMessage/delta",
+      params: { itemId: "item-1", threadId: "thread-1", turnId: "turn-1", delta: "first" }
+    });
+    store.recordNotification({
+      method: "item/agentMessage/delta",
+      params: { itemId: "item-2", threadId: "thread-2", turnId: "turn-2", delta: "second" }
+    });
+
+    expect(store.snapshot("thread-1").agentMessages.map((message) => message.itemId)).toEqual(["item-1"]);
+    expect(store.snapshot("thread-1").activeTurns.map((turn) => turn.turnId)).toEqual(["turn-1"]);
+    expect(store.snapshot(null)).toMatchObject({ agentMessages: [], activeTurns: [] });
   });
 
   it("ignores malformed delta notifications", () => {
