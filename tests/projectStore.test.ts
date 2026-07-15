@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { ADMIN_USER_ID, ProjectStore } from "../server/db.js";
 
@@ -35,7 +36,7 @@ describe("ProjectStore", () => {
     });
 
     expect(project.id).toBeTruthy();
-    expect(project.defaultModel).toBe("gpt-5.5");
+    expect(project.defaultModel).toBe("gpt-5.6-sol");
     expect(project.defaultReasoningEffort).toBe("xhigh");
     expect(project.defaultSandbox).toBe("danger-full-access");
     expect(project.defaultApprovalPolicy).toBe("never");
@@ -53,6 +54,26 @@ describe("ProjectStore", () => {
     expect(store.updateProject(project.id, { name: "Renamed" })?.name).toBe("Renamed");
     expect(store.deleteProject(project.id)).toBe(true);
     expect(store.getProject(project.id)).toBeNull();
+  });
+
+  it("migrates the previous GPT-5.5 project default to GPT-5.6 Sol", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-db-migration-"));
+    const dbPath = path.join(dir, "test.sqlite");
+    const initialStore = new ProjectStore(dbPath);
+    const project = initialStore.createProject({
+      name: "Legacy",
+      rootPath: "/Volumes/DevDrive/program/legacy"
+    });
+    initialStore.close();
+
+    const db = new DatabaseSync(dbPath);
+    db.prepare("UPDATE projects SET default_model = 'gpt-5.5' WHERE id = ?").run(project.id);
+    db.close();
+
+    const migratedStore = new ProjectStore(dbPath);
+    stores.push(migratedStore);
+    expect(migratedStore.getProject(project.id)?.defaultModel).toBe("gpt-5.6-sol");
+    expect(migratedStore.getProject(project.id)?.defaultReasoningEffort).toBe("xhigh");
   });
 
   it("deletes non-admin user metadata and keeps admin", () => {

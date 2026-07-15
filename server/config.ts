@@ -16,6 +16,6 @@ export const serverConfig = {
 export const defaults = {
   sandbox: "danger-full-access",
   approvalPolicy: "never",
-  model: "gpt-5.5",
+  model: "gpt-5.6-sol",
   reasoningEffort: "xhigh"
 } as const;

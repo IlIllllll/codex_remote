@@ -205,13 +205,21 @@ type ModelProfile = {
 };
 
 const modelProfiles: ModelProfile[] = [
-  { id: "gpt-5.5:xhigh", label: "GPT-5.5 xhigh", model: "gpt-5.5", effort: "xhigh" },
-  { id: "gpt-5.5:high", label: "GPT-5.5 high", model: "gpt-5.5", effort: "high" },
-  { id: "gpt-5.5:medium", label: "GPT-5.5 medium", model: "gpt-5.5", effort: "medium" },
-  { id: "gpt-5.5:low", label: "GPT-5.5 low", model: "gpt-5.5", effort: "low" }
+  { id: "gpt-5.6-sol:xhigh", label: "GPT-5.6 Sol xhigh", model: "gpt-5.6-sol", effort: "xhigh" },
+  { id: "gpt-5.6-sol:high", label: "GPT-5.6 Sol high", model: "gpt-5.6-sol", effort: "high" },
+  { id: "gpt-5.6-sol:medium", label: "GPT-5.6 Sol medium", model: "gpt-5.6-sol", effort: "medium" },
+  { id: "gpt-5.6-sol:low", label: "GPT-5.6 Sol low", model: "gpt-5.6-sol", effort: "low" },
+  { id: "gpt-5.6-terra:xhigh", label: "GPT-5.6 Terra xhigh", model: "gpt-5.6-terra", effort: "xhigh" },
+  { id: "gpt-5.6-terra:high", label: "GPT-5.6 Terra high", model: "gpt-5.6-terra", effort: "high" },
+  { id: "gpt-5.6-terra:medium", label: "GPT-5.6 Terra medium", model: "gpt-5.6-terra", effort: "medium" },
+  { id: "gpt-5.6-terra:low", label: "GPT-5.6 Terra low", model: "gpt-5.6-terra", effort: "low" },
+  { id: "gpt-5.6-luna:xhigh", label: "GPT-5.6 Luna xhigh", model: "gpt-5.6-luna", effort: "xhigh" },
+  { id: "gpt-5.6-luna:high", label: "GPT-5.6 Luna high", model: "gpt-5.6-luna", effort: "high" },
+  { id: "gpt-5.6-luna:medium", label: "GPT-5.6 Luna medium", model: "gpt-5.6-luna", effort: "medium" },
+  { id: "gpt-5.6-luna:low", label: "GPT-5.6 Luna low", model: "gpt-5.6-luna", effort: "low" }
 ];
 
-const defaultModelProfileId = "gpt-5.5:xhigh";
+const defaultModelProfileId = "gpt-5.6-sol:xhigh";
 const adminUserId = "admin";
 const markdownRemarkPlugins = [remarkGfm, remarkBreaks];
 
@@ -454,7 +462,9 @@ export function App() {
     setUploadedFiles([]);
     setFilePreview(null);
     setFilePreviewObjectUrl("");
-    setModelProfileId(modelProfileIdFor(selectedProject.defaultModel || "gpt-5.5", selectedProject.defaultReasoningEffort || "xhigh"));
+    setModelProfileId(
+      modelProfileIdFor(selectedProject.defaultModel || "gpt-5.6-sol", selectedProject.defaultReasoningEffort || "xhigh")
+    );
     setSandbox(selectedProject.defaultSandbox || "danger-full-access");
     setApprovalPolicy(selectedProject.defaultApprovalPolicy || "never");
     void refreshThreads(selectedProject.id);

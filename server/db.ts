@@ -298,7 +298,10 @@ export class ProjectStore {
     this.db.exec(`
       UPDATE projects
       SET
-        default_model = CASE WHEN default_model = '' THEN '${defaults.model}' ELSE default_model END,
+        default_model = CASE
+          WHEN default_model = '' OR default_model = 'gpt-5.5' THEN '${defaults.model}'
+          ELSE default_model
+        END,
         default_reasoning_effort = CASE
           WHEN default_reasoning_effort IS NULL OR default_reasoning_effort = '' THEN '${defaults.reasoningEffort}'
           ELSE default_reasoning_effort
