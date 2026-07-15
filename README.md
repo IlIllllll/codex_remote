@@ -54,10 +54,10 @@ npm run dev
 
 开发模式会同时启动：
 
-- Fastify API / WebSocket 服务：`http://127.0.0.1:4573`
-- Vite 前端服务：`http://127.0.0.1:5173`
+- Fastify API / WebSocket 服务：本机访问 `http://127.0.0.1:4573`，监听所有网卡
+- Vite 前端服务：本机访问 `http://127.0.0.1:5173`，监听所有网卡
 
-Vite 会把 `/api` 和 `/ws` 代理到后端。
+Vite 会把 `/api` 和 `/ws` 代理到后端。局域网设备可以访问 `http://<本机局域网 IP>:5173`。
 
 生产构建：
 
@@ -77,10 +77,10 @@ npm run serve
 http://127.0.0.1:4573
 ```
 
-如果需要让同一局域网内的其他设备访问，可以显式指定监听地址：
+服务默认监听所有网卡。同一局域网内的其他设备可以使用本机局域网 IP 访问，例如：
 
-```bash
-CODEX_WEB_HOST=0.0.0.0 CODEX_WEB_PORT=4573 npm run serve
+```text
+http://192.168.250.102:4573
 ```
 
 ## 常用脚本
@@ -203,4 +203,3 @@ npm run test
 ├── vite.config.ts
 └── tsconfig.json
 ```
-
